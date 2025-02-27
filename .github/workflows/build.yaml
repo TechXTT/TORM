@@ -60,8 +60,12 @@ jobs:
       - name: Extract version from commit message
         id: extract_version
         run: |
-          echo "VERSION=$(echo ${GITHUB_EVENT_HEAD_COMMIT_MESSAGE} | sed -n 's/^Release \(.*\)$/\1/p')" >> "$GITHUB_ENV"
-          echo ${{ env.VERSION }}
+          # Extract the version using the GitHub context variable
+          VERSION=$(echo "${{ github.event.head_commit.message }}" | sed -n 's/^Release \(.*\)$/\1/p')
+          # Write the version to the GitHub environment file for later steps
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
+          # Output the extracted version to the logs for debugging
+          echo "Extracted version: ${VERSION}"
 
       - name: Create Release
         uses: actions/create-release@v1
