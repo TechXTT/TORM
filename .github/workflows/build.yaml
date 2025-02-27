@@ -61,7 +61,7 @@ jobs:
         id: extract_version
         run: |
           echo "VERSION=$(echo ${GITHUB_EVENT_HEAD_COMMIT_MESSAGE} | sed -n 's/^Release \(.*\)$/\1/p')" >> $GITHUB_ENV
-          echo "version=$(echo ${GITHUB_EVENT_HEAD_COMMIT_MESSAGE} | sed -n 's/^Release \(.*\)$/\1/p')" >> $GITHUB_OUTPUT
+          echo ${{ env.VERSION }}
 
       - name: Create Release
         uses: actions/create-release@v1
