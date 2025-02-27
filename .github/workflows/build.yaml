@@ -60,7 +60,7 @@ jobs:
       - name: Extract version from commit message
         id: extract_version
         run: |
-          echo "VERSION=$(echo ${GITHUB_EVENT_HEAD_COMMIT_MESSAGE} | sed -n 's/^Release \(.*\)$/\1/p')" >> $GITHUB_ENV
+          echo "VERSION=$(echo ${GITHUB_EVENT_HEAD_COMMIT_MESSAGE} | sed -n 's/^Release \(.*\)$/\1/p')" >> "$GITHUB_ENV"
           echo ${{ env.VERSION }}
 
       - name: Create Release
