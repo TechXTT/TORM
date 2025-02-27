@@ -9,8 +9,8 @@ import (
 )
 
 type Users struct {
-	ID   int
-	Name string
+	Id       int
+	Username string
 }
 
 // TestNewDB ensures that NewDB correctly initializes a database connection.
@@ -54,6 +54,10 @@ func TestSelect(t *testing.T) {
 
 	// Ensure expectations were met
 	assert.NoError(t, mock.ExpectationsWereMet())
+
+	// Check if users has the TechXT user
+	assert.Len(t, users, 1)
+	assert.Equal(t, "TechXT", users[0].Username)
 }
 
 func TestAutoMigrate(t *testing.T) {
@@ -62,13 +66,13 @@ func TestAutoMigrate(t *testing.T) {
 	defer mockDB.Close()
 
 	// Mock expected query execution
-	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS users \(id TEXT, name TEXT\)`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS users \(id TEXT\,username TEXT\)`).WillReturnResult(sqlmock.NewResult(0, 0))
 
 	// Create DB instance
 	testDB := &db.DB{Conn: mockDB}
 
 	// Execute the query
-	err = testDB.AutoMigrate(Users{})
+	err = testDB.AutoMigrate(&Users{})
 	assert.NoError(t, err)
 
 	// Ensure expectations were met

@@ -69,11 +69,28 @@ func (db *DB) Select(dest interface{}) error {
 
 		fieldPtrs := make([]interface{}, len(columns))
 		for i := range columns {
-			fieldPtrs[i] = elemVal.Field(i).Addr().Interface()
+			field := elemVal.Field(i)
+			if field.Kind() == reflect.Ptr {
+				fieldPtrs[i] = field.Addr().Interface()
+			} else {
+				fieldPtrs[i] = reflect.New(field.Type()).Interface()
+			}
 		}
 
 		if err := rows.Scan(fieldPtrs...); err != nil {
 			return fmt.Errorf("failed to scan row: %w", err)
+		}
+
+		for i, _ := range columns {
+			field := elemVal.Field(i)
+			if field.Kind() == reflect.Ptr {
+				field.Set(reflect.ValueOf(fieldPtrs[i]).Elem())
+			} else {
+				val := reflect.ValueOf(fieldPtrs[i]).Elem()
+				if val.IsValid() {
+					field.Set(val)
+				}
+			}
 		}
 
 		sliceVal.Set(reflect.Append(sliceVal, elemVal))
