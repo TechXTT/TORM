@@ -59,14 +59,16 @@ jobs:
 
       - name: Extract version from commit message
         id: extract_version
-        run: echo "::set-output name=version::$(echo ${GITHUB_EVENT_HEAD_COMMIT_MESSAGE} | sed -n 's/^Release \(.*\)$/\1/p')" >> $GITHUB_ENV
+        run: |
+          echo "VERSION=$(echo ${GITHUB_EVENT_HEAD_COMMIT_MESSAGE} | sed -n 's/^Release \(.*\)$/\1/p')" >> $GITHUB_ENV
+          echo "version=$(echo ${GITHUB_EVENT_HEAD_COMMIT_MESSAGE} | sed -n 's/^Release \(.*\)$/\1/p')" >> $GITHUB_OUTPUT
 
       - name: Create Release
         uses: actions/create-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         with:
-          tag_name: ${{ steps.extract_version.outputs.version }}
-          release_name: Release ${{ steps.extract_version.outputs.version }}
+          tag_name: ${{ env.VERSION }}
+          release_name: Release ${{ env.VERSION }}
           draft: false
-          prerelease: ${{ contains(steps.extract_version.outputs.version, '-alpha') || contains(steps.extract_version.outputs.version, '-beta') }}
+          prerelease: ${{ contains(env.VERSION, '-alpha') || contains(env.VERSION, '-beta') }}
