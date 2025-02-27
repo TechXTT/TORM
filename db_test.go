@@ -31,7 +31,7 @@ func TestNewDB(t *testing.T) {
 }
 
 // TestQuery checks if the Query function executes without errors.
-func TestQuery(t *testing.T) {
+func TestSelect(t *testing.T) {
 	mockDB, mock, err := sqlmock.New()
 	assert.NoError(t, err)
 	defer mockDB.Close()
@@ -50,6 +50,25 @@ func TestQuery(t *testing.T) {
 
 	// Execute the query
 	err = testDB.Select(&users)
+	assert.NoError(t, err)
+
+	// Ensure expectations were met
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestAutoMigrate(t *testing.T) {
+	mockDB, mock, err := sqlmock.New()
+	assert.NoError(t, err)
+	defer mockDB.Close()
+
+	// Mock expected query execution
+	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS users \(id TEXT, name TEXT\)`).WillReturnResult(sqlmock.NewResult(0, 0))
+
+	// Create DB instance
+	testDB := &db.DB{Conn: mockDB}
+
+	// Execute the query
+	err = testDB.AutoMigrate(Users{})
 	assert.NoError(t, err)
 
 	// Ensure expectations were met

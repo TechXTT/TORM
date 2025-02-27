@@ -85,3 +85,55 @@ func (db *DB) Select(dest interface{}) error {
 
 	return nil
 }
+
+func (db *DB) AutoMigrate(dest interface{}) error {
+	destVal := reflect.ValueOf(dest)
+	if destVal.Kind() != reflect.Ptr || destVal.Elem().Kind() != reflect.Struct {
+		return fmt.Errorf("dest must be a pointer to a struct")
+	}
+
+	elemVal := destVal.Elem()
+	elemType := elemVal.Type()
+
+	tableName := ""
+	for i, r := range elemType.Name() {
+		if i == 0 {
+			tableName += string(unicode.ToLower(r))
+		} else {
+			if unicode.IsUpper(r) {
+				tableName += "_" + string(unicode.ToLower(r))
+			} else {
+				tableName += string(r)
+			}
+		}
+	}
+
+	query := fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (", tableName)
+	for i := 0; i < elemType.NumField(); i++ {
+		field := elemType.Field(i)
+		fieldName := ""
+		for j, r := range field.Name {
+			if j == 0 {
+				fieldName += string(unicode.ToLower(r))
+			} else {
+				if unicode.IsUpper(r) {
+					fieldName += "_" + string(unicode.ToLower(r))
+				} else {
+					fieldName += string(r)
+				}
+			}
+		}
+		query += fmt.Sprintf("%s %s,", fieldName, "TEXT")
+	}
+	query = query[:len(query)-1] + ");"
+
+	if _, err := db.Conn.Exec(query); err != nil {
+		return fmt.Errorf("failed to execute query: %w", err)
+	}
+
+	return nil
+}
+
+func (db *DB) Close() error {
+	return db.Conn.Close()
+}
