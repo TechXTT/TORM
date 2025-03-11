@@ -125,6 +125,11 @@ func (db *DB) AutoMigrate(dest interface{}) error {
 		}
 	}
 
+	type_dict := map[string]string{
+		"int":    "INTEGER",
+		"string": "TEXT",
+	}
+
 	query := fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (", tableName)
 	for i := 0; i < elemType.NumField(); i++ {
 		field := elemType.Field(i)
@@ -140,7 +145,8 @@ func (db *DB) AutoMigrate(dest interface{}) error {
 				}
 			}
 		}
-		query += fmt.Sprintf("%s %s,", fieldName, "TEXT")
+
+		query += fieldName + " " + type_dict[field.Type.Name()] + ","
 	}
 	query = query[:len(query)-1] + ");"
 

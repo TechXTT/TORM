@@ -66,7 +66,7 @@ func TestAutoMigrate(t *testing.T) {
 	defer mockDB.Close()
 
 	// Mock expected query execution
-	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS users \(id TEXT\,username TEXT\)`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS users \(id INTEGER\,username TEXT\)`).WillReturnResult(sqlmock.NewResult(0, 0))
 
 	// Create DB instance
 	testDB := &db.DB{Conn: mockDB}
