@@ -31,7 +31,7 @@ func TestNewDB(t *testing.T) {
 }
 
 // TestQuery checks if the Query function executes without errors.
-func TestSelect(t *testing.T) {
+func TestSelectQuery(t *testing.T) {
 	mockDB, mock, err := sqlmock.New()
 	assert.NoError(t, err)
 	defer mockDB.Close()
@@ -45,18 +45,53 @@ func TestSelect(t *testing.T) {
 	// Create DB instance
 	testDB := &db.DB{Conn: mockDB}
 
-	// Create a slice of TestUser structs
+	// Create a new QueryBuilder instance
+	qb := testDB.Query("users")
+
+	// Destination slice
 	var users []Users
 
 	// Execute the query
-	err = testDB.Select(&users)
+	err = qb.Select(&users)
 	assert.NoError(t, err)
 
 	// Ensure expectations were met
 	assert.NoError(t, mock.ExpectationsWereMet())
 
-	// Check if users has the TechXT user
-	assert.Len(t, users, 1)
+	// Ensure the correct data was returned
+	assert.Equal(t, 1, users[0].Id)
+	assert.Equal(t, "TechXT", users[0].Username)
+}
+
+func TestWhereQuery(t *testing.T) {
+	mockDB, mock, err := sqlmock.New()
+	assert.NoError(t, err)
+	defer mockDB.Close()
+
+	// Mock expected query execution
+	rows := sqlmock.NewRows([]string{"id", "name"}).
+		AddRow(1, "TechXT")
+
+	mock.ExpectQuery(`SELECT \* FROM users WHERE id = \'1\'`).WillReturnRows(rows)
+
+	// Create DB instance
+	testDB := &db.DB{Conn: mockDB}
+
+	// Create a new QueryBuilder instance
+	qb := testDB.Query("users").Where("id = ?", 1)
+
+	// Destination slice
+	var users []Users
+
+	// Execute the query
+	err = qb.Select(&users)
+	assert.NoError(t, err)
+
+	// Ensure expectations were met
+	assert.NoError(t, mock.ExpectationsWereMet())
+
+	// Ensure the correct data was returned
+	assert.Equal(t, 1, users[0].Id)
 	assert.Equal(t, "TechXT", users[0].Username)
 }
 
