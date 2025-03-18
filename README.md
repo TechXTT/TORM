@@ -1,4 +1,4 @@
-TORM-Project - v0.0.4-alpha
+TORM-Project - v0.0.7-alpha
 
 TORM is a lightweight database management package written in Go. It provides an easy-to-use interface for interacting with PostgreSQL databases, including automatic table creation and basic query operations.
 
