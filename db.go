@@ -222,6 +222,22 @@ func (qb *QueryBuilder) Update(data interface{}) error {
 	return nil
 }
 
+func (qb *QueryBuilder) Delete() error {
+	query := fmt.Sprintf("DELETE FROM %s", qb.tableName)
+	if len(qb.whereClauses) > 0 {
+		query += " WHERE " + qb.whereClauses[0]
+		for i := 1; i < len(qb.whereClauses); i++ {
+			query += " AND " + qb.whereClauses[i]
+		}
+	}
+
+	if _, err := qb.db.Conn.Exec(query, qb.args...); err != nil {
+		return fmt.Errorf("failed to execute query: %w", err)
+	}
+
+	return nil
+}
+
 func (db *DB) AutoMigrate(dest interface{}) error {
 	destVal := reflect.ValueOf(dest)
 	if destVal.Kind() != reflect.Ptr || destVal.Elem().Kind() != reflect.Struct {

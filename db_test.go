@@ -151,6 +151,29 @@ func TestUpdateQuery(t *testing.T) {
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestDeleteQuery(t *testing.T) {
+	mockDB, mock, err := sqlmock.New()
+	assert.NoError(t, err)
+	defer mockDB.Close()
+
+	// Mock expected query execution
+	mock.ExpectExec(`DELETE FROM users WHERE id = \'1\'`).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+
+	// Create DB instance
+	testDB := &db.DB{Conn: mockDB}
+
+	// Create a new QueryBuilder instance
+	qb := testDB.Query("users").Where("id = ?", 1)
+
+	// Execute the delete query
+	err = qb.Delete()
+	assert.NoError(t, err)
+
+	// Ensure expectations were met
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestAutoMigrate(t *testing.T) {
 	mockDB, mock, err := sqlmock.New()
 	assert.NoError(t, err)
