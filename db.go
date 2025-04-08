@@ -35,82 +35,6 @@ func NewDB(dataSourceName string) (*DB, error) {
 	return &DB{Conn: conn}, nil
 }
 
-// Select retrieves all rows from the table corresponding to the provided struct slice
-// func (db *DB) Select(dest interface{}) error {
-// 	destVal := reflect.ValueOf(dest)
-// 	if destVal.Kind() != reflect.Ptr || destVal.Elem().Kind() != reflect.Slice {
-// 		return fmt.Errorf("dest must be a pointer to a slice")
-// 	}
-
-// 	sliceVal := destVal.Elem()
-// 	elemType := sliceVal.Type().Elem()
-
-// 	// Use the struct name as the table name
-// 	tableName := ""
-// 	for i, r := range elemType.Name() {
-// 		if i == 0 {
-// 			tableName += string(unicode.ToLower(r))
-// 		} else {
-// 			if unicode.IsUpper(r) {
-// 				tableName += "_" + string(unicode.ToLower(r))
-// 			} else {
-// 				tableName += string(r)
-// 			}
-// 		}
-// 	}
-
-// 	query := fmt.Sprintf("SELECT * FROM %s", tableName)
-// 	rows, err := db.Conn.Query(query)
-// 	if err != nil {
-// 		return fmt.Errorf("query failed: %w", err)
-// 	}
-// 	defer rows.Close()
-
-// 	columns, err := rows.Columns()
-// 	if err != nil {
-// 		return fmt.Errorf("failed to get columns: %w", err)
-// 	}
-
-// 	for rows.Next() {
-// 		elemPtr := reflect.New(elemType)
-// 		elemVal := elemPtr.Elem()
-
-// 		fieldPtrs := make([]interface{}, len(columns))
-// 		for i := range columns {
-// 			field := elemVal.Field(i)
-// 			if field.Kind() == reflect.Ptr {
-// 				fieldPtrs[i] = field.Addr().Interface()
-// 			} else {
-// 				fieldPtrs[i] = reflect.New(field.Type()).Interface()
-// 			}
-// 		}
-
-// 		if err := rows.Scan(fieldPtrs...); err != nil {
-// 			return fmt.Errorf("failed to scan row: %w", err)
-// 		}
-
-// 		for i, _ := range columns {
-// 			field := elemVal.Field(i)
-// 			if field.Kind() == reflect.Ptr {
-// 				field.Set(reflect.ValueOf(fieldPtrs[i]).Elem())
-// 			} else {
-// 				val := reflect.ValueOf(fieldPtrs[i]).Elem()
-// 				if val.IsValid() {
-// 					field.Set(val)
-// 				}
-// 			}
-// 		}
-
-// 		sliceVal.Set(reflect.Append(sliceVal, elemVal))
-// 	}
-
-// 	if err := rows.Err(); err != nil {
-// 		return fmt.Errorf("error iterating rows: %w", err)
-// 	}
-
-// 	return nil
-// }
-
 func (db *DB) Query(tableName string) *QueryBuilder {
 	return &QueryBuilder{db: db, tableName: tableName}
 }
@@ -195,6 +119,120 @@ func (qb *QueryBuilder) Select(dest interface{}) error {
 
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("error iterating rows: %w", err)
+	}
+
+	return nil
+}
+
+func (qb *QueryBuilder) Insert(data interface{}) error {
+	dataVal := reflect.ValueOf(data)
+	if dataVal.Kind() != reflect.Ptr || dataVal.Elem().Kind() != reflect.Struct {
+		return fmt.Errorf("data must be a pointer to a struct")
+	}
+
+	elemVal := dataVal.Elem()
+	elemType := elemVal.Type()
+
+	query := fmt.Sprintf("INSERT INTO %s (", qb.tableName)
+	values := "VALUES ("
+	for i := 0; i < elemType.NumField(); i++ {
+		field := elemType.Field(i)
+		fieldName := ""
+		for j, r := range field.Name {
+			if j == 0 {
+				fieldName += string(unicode.ToLower(r))
+			} else {
+				if unicode.IsUpper(r) {
+					fieldName += "_" + string(unicode.ToLower(r))
+				} else {
+					fieldName += string(r)
+				}
+			}
+		}
+
+		query += fieldName + ","
+		values += "?,"
+	}
+
+	query = query[:len(query)-1] + ") " + values[:len(values)-1] + ");"
+
+	stmt, err := qb.db.Conn.Prepare(query)
+	if err != nil {
+		return fmt.Errorf("failed to prepare statement: %w", err)
+	}
+	defer stmt.Close()
+
+	args := make([]interface{}, elemType.NumField())
+	for i := 0; i < elemType.NumField(); i++ {
+		args[i] = elemVal.Field(i).Interface()
+	}
+
+	if _, err := stmt.Exec(args...); err != nil {
+		return fmt.Errorf("failed to execute query: %w", err)
+	}
+
+	return nil
+}
+
+func (qb *QueryBuilder) Update(data interface{}) error {
+	dataVal := reflect.ValueOf(data)
+	if dataVal.Kind() != reflect.Ptr || dataVal.Elem().Kind() != reflect.Struct {
+		return fmt.Errorf("data must be a pointer to a struct")
+	}
+
+	elemVal := dataVal.Elem()
+	elemType := elemVal.Type()
+
+	query := fmt.Sprintf("UPDATE %s SET ", qb.tableName)
+	for i := 0; i < elemType.NumField(); i++ {
+		field := elemType.Field(i)
+		fieldName := ""
+		for j, r := range field.Name {
+			if j == 0 {
+				fieldName += string(unicode.ToLower(r))
+			} else {
+				if unicode.IsUpper(r) {
+					fieldName += "_" + string(unicode.ToLower(r))
+				} else {
+					fieldName += string(r)
+				}
+			}
+		}
+
+		query += fieldName + " = ?,"
+	}
+	query = query[:len(query)-1] + " WHERE id = ?;"
+
+	stmt, err := qb.db.Conn.Prepare(query)
+	if err != nil {
+		return fmt.Errorf("failed to prepare statement: %w", err)
+	}
+	defer stmt.Close()
+
+	args := make([]interface{}, elemType.NumField()+1)
+	for i := 0; i < elemType.NumField(); i++ {
+		args[i] = elemVal.Field(i).Interface()
+	}
+	args[elemType.NumField()] = elemVal.FieldByName("Id").Interface()
+
+	if _, err := stmt.Exec(args...); err != nil {
+		return fmt.Errorf("failed to execute query: %w", err)
+	}
+
+	return nil
+}
+
+func (qb *QueryBuilder) Delete() error {
+	query := fmt.Sprintf("DELETE FROM %s", qb.tableName)
+	if len(qb.whereClauses) > 0 {
+		query += " WHERE " + qb.whereClauses[0]
+		for i := 1; i < len(qb.whereClauses); i++ {
+			query += " AND " + qb.whereClauses[i]
+		}
+	}
+
+	if _, err := qb.db.Conn.Exec(query, qb.args...); err != nil {
+		return fmt.Errorf("failed to execute query: %w", err)
 	}
 
 	return nil
