@@ -174,6 +174,54 @@ func (qb *QueryBuilder) Insert(data interface{}) error {
 	return nil
 }
 
+func (qb *QueryBuilder) Update(data interface{}) error {
+	dataVal := reflect.ValueOf(data)
+	if dataVal.Kind() != reflect.Ptr || dataVal.Elem().Kind() != reflect.Struct {
+		return fmt.Errorf("data must be a pointer to a struct")
+	}
+
+	elemVal := dataVal.Elem()
+	elemType := elemVal.Type()
+
+	query := fmt.Sprintf("UPDATE %s SET ", qb.tableName)
+	for i := 0; i < elemType.NumField(); i++ {
+		field := elemType.Field(i)
+		fieldName := ""
+		for j, r := range field.Name {
+			if j == 0 {
+				fieldName += string(unicode.ToLower(r))
+			} else {
+				if unicode.IsUpper(r) {
+					fieldName += "_" + string(unicode.ToLower(r))
+				} else {
+					fieldName += string(r)
+				}
+			}
+		}
+
+		query += fieldName + " = ?,"
+	}
+	query = query[:len(query)-1] + " WHERE id = ?;"
+
+	stmt, err := qb.db.Conn.Prepare(query)
+	if err != nil {
+		return fmt.Errorf("failed to prepare statement: %w", err)
+	}
+	defer stmt.Close()
+
+	args := make([]interface{}, elemType.NumField()+1)
+	for i := 0; i < elemType.NumField(); i++ {
+		args[i] = elemVal.Field(i).Interface()
+	}
+	args[elemType.NumField()] = elemVal.FieldByName("Id").Interface()
+
+	if _, err := stmt.Exec(args...); err != nil {
+		return fmt.Errorf("failed to execute query: %w", err)
+	}
+
+	return nil
+}
+
 func (db *DB) AutoMigrate(dest interface{}) error {
 	destVal := reflect.ValueOf(dest)
 	if destVal.Kind() != reflect.Ptr || destVal.Elem().Kind() != reflect.Struct {
