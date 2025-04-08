@@ -95,6 +95,36 @@ func TestWhereQuery(t *testing.T) {
 	assert.Equal(t, "TechXT", users[0].Username)
 }
 
+func TestInsertQuery(t *testing.T) {
+	mockDB, mock, err := sqlmock.New()
+	assert.NoError(t, err)
+	defer mockDB.Close()
+
+	// Mock expected query execution
+	expectedInsert := `INSERT INTO users \(id,username\) VALUES \(\?,\?\);`
+
+	prep := mock.ExpectPrepare(expectedInsert)
+
+	prep.ExpectExec().WithArgs(1, "TechXT").WillReturnResult(sqlmock.NewResult(1, 1))
+	// Create DB instance
+	testDB := &db.DB{Conn: mockDB}
+
+	// Create a new QueryBuilder instance
+	qb := testDB.Query("users")
+
+	user := &Users{
+		Id:       1,
+		Username: "TechXT",
+	}
+
+	// Execute the insert query
+	err = qb.Insert(user)
+	assert.NoError(t, err)
+
+	// Ensure expectations were met
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestAutoMigrate(t *testing.T) {
 	mockDB, mock, err := sqlmock.New()
 	assert.NoError(t, err)
