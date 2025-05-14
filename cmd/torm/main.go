@@ -7,6 +7,7 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 
 	"github.com/TechXTT/TORM/internal/dsl"
@@ -92,6 +93,24 @@ func main() {
 			log.Fatalf("code generation failed: %v", err)
 		}
 		fmt.Println("Code generation complete.")
+
+		// Format generated code
+		fmt.Println("Formatting generated code...")
+		fmtCmd := exec.Command("go", "fmt", "./" + *outDir)
+		fmtCmd.Stdout = os.Stdout
+		fmtCmd.Stderr = os.Stderr
+		if err := fmtCmd.Run(); err != nil {
+			log.Fatalf("go fmt failed: %v", err)
+		}
+
+		// Tidy module
+		fmt.Println("Running go mod tidy...")
+		tidyCmd := exec.Command("go", "mod", "tidy")
+		tidyCmd.Stdout = os.Stdout
+		tidyCmd.Stderr = os.Stderr
+		if err := tidyCmd.Run(); err != nil {
+			log.Fatalf("go mod tidy failed: %v", err)
+		}
 
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command %q\n", cmd)
