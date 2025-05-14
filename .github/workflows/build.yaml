@@ -53,7 +53,7 @@ jobs:
 
     - name: Build
       run: |
-        go build -o myapp .
+        go build -o torm ./cmd/torm
       env:
         CGO_ENABLED: 0
 
