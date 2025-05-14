@@ -1,9 +1,9 @@
-// File: internal/dsl/generator.go
 package dsl
 
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"text/template"
 )
@@ -11,6 +11,11 @@ import (
 // GenerateGo writes Go code for each entity in the AST
 type Generator struct {
 	Template *template.Template
+}
+
+type entityTemplateData struct {
+	Package string
+	Entity
 }
 
 func NewGenerator() *Generator {
@@ -53,13 +58,24 @@ func buildTags(f Field) string {
 }
 
 func (g *Generator) Generate(ast AST, outDir string) error {
+	// Determine package name from output directory
+	pkgName := filepath.Base(outDir)
+	// Ensure directory exists
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
+		return err
+	}
 	for _, ent := range ast.Entities {
-		path := fmt.Sprintf("%s/%s.go", outDir, ent.Name)
-		f, err := os.Create(path)
+		data := entityTemplateData{
+			Package: pkgName,
+			Entity:  ent,
+		}
+		fileName := fmt.Sprintf("%s.go", strings.ToLower(ent.Name))
+		filePath := filepath.Join(outDir, fileName)
+		f, err := os.Create(filePath)
 		if err != nil {
 			return err
 		}
-		if err := g.Template.Execute(f, ent); err != nil {
+		if err := g.Template.Execute(f, data); err != nil {
 			f.Close()
 			return err
 		}
@@ -68,20 +84,20 @@ func (g *Generator) Generate(ast AST, outDir string) error {
 	return nil
 }
 
-const entityTemplate = `package {{ lower .Name }}
+const entityTemplate = `package {{ .Package }}
 
 import (
 {{- if hasTime .Fields }}
-    "time"
+	"time"
 {{- end }}
 {{- if hasUUID .Fields }}
-    uuid "github.com/google/uuid"
+	uuid "github.com/google/uuid"
 {{- end }}
 )
 
 type {{ .Name }} struct {
 {{- range .Fields }}
-    {{ .Name }} {{ .Type }}{{ buildTags . }}
+	{{ .Name }} {{ .Type }}{{ buildTags . }}
 {{- end }}
 }
 `
