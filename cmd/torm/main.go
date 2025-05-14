@@ -83,7 +83,7 @@ func main() {
 			allEntities = append(allEntities, ast.Entities...)
 		}
 
-		generator, err := dsl.NewGenerator()
+		generator := dsl.NewGenerator()
 		if err != nil {
 			log.Fatalf("initialize code generator: %v", err)
 		}
