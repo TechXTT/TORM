@@ -42,8 +42,8 @@ func (g *Generator) Generate(ast AST, outDir string) error {
 }
 
 const entityTemplate = `package {{.Name}}
-struct {
+type {{ .Name }} struct {
 {{- range .Fields }}
-{{.Name}} {{.Type}}  + "" + db:"{{.Name | lower}}" + "" + 
+{{.Name}} {{.Type}}  ` + "`" + `db:"{{.Name | lower}}"` + "`" + `
 {{- end }}
-} + "" + "`
+}`
