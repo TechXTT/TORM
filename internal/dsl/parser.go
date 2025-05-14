@@ -7,28 +7,32 @@ import (
 	"strings"
 )
 
-// AST is the abstract syntax tree for schema definitions
+// AST represents the abstract syntax tree of parsed schema definitions.
 type AST struct {
 	Entities []Entity
 }
 
+// Entity describes a database entity from the DSL.
 type Entity struct {
 	Name   string
 	Fields []Field
 }
 
+// Field describes a single field/column in an entity, including optional tags.
 type Field struct {
-	Name string
-	Type string
-	Tag  map[string]string
+	Name          string
+	Type          string
+	NotNull       bool
+	PrimaryKey    bool
+	AutoIncrement bool
+	Default       *string
+	EnumValues    []string
 }
 
-// ParseSchema reads a DSL file and returns its AST
-type ParseFunc func(input []byte) (AST, error)
-
+// ParseSchema reads a DSL file and returns its AST.
 func ParseSchema(input []byte) (AST, error) {
 	text := string(input)
-	// Find entity declarations
+	// Regex to find entity declarations: entity.<Name>()
 	entityRe := regexp.MustCompile(`entity\.(\w+)\s*\(\)`)
 	entityMatches := entityRe.FindAllStringSubmatch(text, -1)
 	if len(entityMatches) == 0 {
@@ -38,16 +42,20 @@ func ParseSchema(input []byte) (AST, error) {
 	var ast AST
 	for _, em := range entityMatches {
 		name := em[1]
-		// Limit processing to text after this entity declaration
+		// Scope text to after this entity declaration
 		idx := strings.Index(text, em[0])
-		sub := text[idx:]
-		lines := strings.Split(sub, "\n")
+		if idx < 0 {
+			continue
+		}
+		block := text[idx:]
+		lines := strings.Split(block, "\n")
 
-		var fieldsList []Field
-		// Regex for Field definitions
+		var fields []Field
+		// Regex for Field("name", "Type")
 		fieldRe := regexp.MustCompile(`Field\("([^"]+)",\s*"([^"]+)"\)`)
-		// Regex for chained methods
-		methodRe := regexp.MustCompile(`\.(\w+)\(([^)]*)\)`)
+		// Regex for chained calls: .Method(args)
+		chainRe := regexp.MustCompile(`\.(\w+)\(([^)]*)\)`)
+
 		for _, line := range lines {
 			line = strings.TrimSpace(line)
 			if !strings.HasPrefix(line, "Field(") {
@@ -57,38 +65,40 @@ func ParseSchema(input []byte) (AST, error) {
 			if fm == nil {
 				continue
 			}
-			fname := fm[1]
-			ftype := fm[2]
-			tagMap := make(map[string]string)
-
-			// Extract chained method calls for field options
-			for _, m := range methodRe.FindAllStringSubmatch(line, -1) {
+			f := Field{
+				Name: fm[1],
+				Type: fm[2],
+			}
+			// Process chained methods
+			for _, m := range chainRe.FindAllStringSubmatch(line, -1) {
 				method := m[1]
 				arg := m[2]
 				switch method {
 				case "NotNull":
-					tagMap["NotNull"] = "true"
+					f.NotNull = true
 				case "PrimaryKey":
-					tagMap["PrimaryKey"] = "true"
+					f.PrimaryKey = true
 				case "AutoIncrement":
-					tagMap["AutoIncrement"] = "true"
+					f.AutoIncrement = true
 				case "Default":
-					tagMap["Default"] = arg
+					// strip quotes if present
+					val := strings.Trim(arg, `"`)
+					f.Default = &val
 				case "Enum":
-					tagMap["Enum"] = arg
+					// parse comma-separated values inside quotes
+					args := strings.Split(arg, ",")
+					for i := range args {
+						args[i] = strings.Trim(strings.TrimSpace(args[i]), `"`)
+					}
+					f.EnumValues = args
 				}
 			}
-			fieldsList = append(fieldsList, Field{
-				Name: fname,
-				Type: ftype,
-				Tag:  tagMap,
-			})
+			fields = append(fields, f)
 		}
 		ast.Entities = append(ast.Entities, Entity{
 			Name:   name,
-			Fields: fieldsList,
+			Fields: fields,
 		})
 	}
-
 	return ast, nil
 }

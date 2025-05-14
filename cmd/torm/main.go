@@ -83,9 +83,13 @@ func main() {
 			allEntities = append(allEntities, ast.Entities...)
 		}
 
-		generator := dsl.NewGenerator()
-		if err := generator.Generate(dsl.AST{Entities: allEntities}, *outDir); err != nil {
-			log.Fatalf("codegen failed: %v", err)
+		generator, err := dsl.NewGenerator()
+		if err != nil {
+			log.Fatalf("initialize code generator: %v", err)
+		}
+		ast := dsl.AST{Entities: allEntities}
+		if err := generator.Generate(ast, *outDir); err != nil {
+			log.Fatalf("code generation failed: %v", err)
 		}
 		fmt.Println("Code generation complete.")
 
