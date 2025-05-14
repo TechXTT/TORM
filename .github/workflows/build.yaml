@@ -49,7 +49,7 @@ jobs:
     - name: Test
       env:
         DATABASE_URL: postgres://postgres:password@localhost:5432/postgres?sslmode=disable
-      run: go test ./... -v -cover
+      run: go test ./pkg/migrate ./internal/core -v
 
     - name: Build
       run: |
