@@ -63,6 +63,7 @@ func main() {
 		outDir := fs.String("out", "pkg/schema", "output directory for generated code")
 		fs.Parse(os.Args[2:])
 
+		log.Printf("Scanning schema directory %s", *schemaDir)
 		entries, err := ioutil.ReadDir(*schemaDir)
 		if err != nil {
 			log.Fatalf("read schema dir: %v", err)
@@ -70,6 +71,7 @@ func main() {
 
 		var allEntities []dsl.Entity
 		for _, fi := range entries {
+			log.Printf("Processing schema file: %s", fi.Name())
 			if fi.IsDir() || filepath.Ext(fi.Name()) != ".schema" {
 				continue
 			}
@@ -81,13 +83,15 @@ func main() {
 			if err != nil {
 				log.Fatalf("parse schema %s: %v", fi.Name(), err)
 			}
+			log.Printf("Found %d entities in %s", len(ast.Entities), fi.Name())
 			allEntities = append(allEntities, ast.Entities...)
 		}
 
-		generator := dsl.NewGenerator()
+		generator, err := dsl.NewGenerator()
 		if err != nil {
 			log.Fatalf("initialize code generator: %v", err)
 		}
+		log.Printf("Generating %d entity models", len(allEntities))
 		ast := dsl.AST{Entities: allEntities}
 		if err := generator.Generate(ast, *outDir); err != nil {
 			log.Fatalf("code generation failed: %v", err)
@@ -96,7 +100,7 @@ func main() {
 
 		// Format generated code
 		fmt.Println("Formatting generated code...")
-		fmtCmd := exec.Command("go", "fmt", "./" + *outDir)
+		fmtCmd := exec.Command("go", "fmt", "./"+*outDir)
 		fmtCmd.Stdout = os.Stdout
 		fmtCmd.Stderr = os.Stderr
 		if err := fmtCmd.Run(); err != nil {

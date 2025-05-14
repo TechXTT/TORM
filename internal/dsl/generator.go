@@ -18,18 +18,21 @@ type entityTemplateData struct {
 	Entity
 }
 
-func NewGenerator() *Generator {
+func NewGenerator() (*Generator, error) {
 	funcMap := template.FuncMap{
 		"lower":     strings.ToLower,
 		"hasTime":   hasTime,
 		"hasUUID":   hasUUID,
 		"buildTags": buildTags,
 	}
-	tmpl := template.Must(template.
+	tmpl, err := template.
 		New("entity").
 		Funcs(funcMap).
-		Parse(entityTemplate))
-	return &Generator{Template: tmpl}
+		Parse(entityTemplate)
+	if err != nil {
+		return nil, err
+	}
+	return &Generator{Template: tmpl}, nil
 }
 
 // hasTime returns true if any field uses time.Time.
