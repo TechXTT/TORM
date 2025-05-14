@@ -2,6 +2,7 @@ package dsl
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -68,6 +69,7 @@ func (g *Generator) Generate(ast AST, outDir string) error {
 		return err
 	}
 	for _, ent := range ast.Entities {
+		log.Printf("Generating code for %s.go", strings.ToLower(ent.Name))
 		data := entityTemplateData{
 			Package: pkgName,
 			Entity:  ent,
