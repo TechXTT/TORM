@@ -22,6 +22,11 @@ func Open(dsn string) (*DB, error) {
 	return &DB{conn: db}, nil
 }
 
+// Close closes the database connection
+func (d *DB) Close() error {
+	return d.conn.Close()
+}
+
 // Query returns a new query builder
 func Query[T any](d *DB) *core.QueryBuilder[T] {
 	return core.NewQueryBuilder[T](d.conn)
