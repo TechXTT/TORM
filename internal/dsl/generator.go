@@ -4,6 +4,7 @@ package dsl
 import (
 	"fmt"
 	"os"
+	"strings"
 	"text/template"
 )
 
@@ -13,7 +14,14 @@ type Generator struct {
 }
 
 func NewGenerator() *Generator {
-	tmpl := template.Must(template.New("entity").Parse(entityTemplate))
+	tmpl := template.Must(template.
+		New("entity").
+		Funcs(template.FuncMap{
+			"lower": func(s string) string {
+				return strings.ToLower(s)
+			},
+		}).
+		Parse(entityTemplate))
 	return &Generator{Template: tmpl}
 }
 
