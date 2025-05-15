@@ -16,7 +16,7 @@ func main() {
 	cmd := os.Args[1]
 	switch cmd {
 	case "version":
-		fmt.Println("TORM version 0.4.0")
+		fmt.Println("TORM version 0.4.1")
 	case "help":
 		fmt.Println("Usage: torm <command> [options]")
 		fmt.Println("Commands: migrate, codegen")
