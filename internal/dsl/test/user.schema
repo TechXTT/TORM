@@ -1,0 +1,8 @@
+entity.User().
+    Field("id", "uuid.UUID").NotNull().PrimaryKey().
+    Field("Username", "string").
+    Field("Email", "string").
+    Field("Password", "string").
+    Field("CreatedAt", "time.Time").Default("now()").
+    Field("UpdatedAt", "time.Time").Default("now()").
+    Field("DeletedAt", "time.Time").Default(nil).

@@ -1,0 +1,16 @@
+package test
+
+import (
+	uuid "github.com/google/uuid"
+	"time"
+)
+
+type User struct {
+	id        uuid.UUID `db:"id"`
+	Username  string    `db:"username"`
+	Email     string    `db:"email"`
+	Password  string    `db:"password"`
+	CreatedAt time.Time `db:"createdat"`
+	UpdatedAt time.Time `db:"updatedat"`
+	DeletedAt time.Time `db:"deletedat"`
+}
