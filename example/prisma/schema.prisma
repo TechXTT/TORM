@@ -1,0 +1,21 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "go run github.com/TechXTT/TORM"
+  output   = "../prisma-client"
+}
+
+model User {
+  id        String   @id @default(uuid()) @db.Uuid
+  firstName String   @map("first_name")
+  lastName  String   @map("last_name")
+  email     String   @unique
+  password  String
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("users")
+}

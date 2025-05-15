@@ -1,61 +1,65 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"log"
 	"os"
 	"time"
 
-	"github.com/TechXTT/TORM/internal/runtime"
+	"github.com/TechXTT/TORM/pkg/torm/runtime"
 	"github.com/google/uuid"
 )
 
 func main() {
-	// 1) Connect to the database
+	// Load .env file (if using godotenv)
+	// eg: godotenv.Load()
+
 	dsn := os.Getenv("DATABASE_URL")
 	db, err := runtime.Connect(dsn)
 	if err != nil {
-		panic(fmt.Errorf("connect: %w", err))
+		log.Fatalf("connect: %v", err)
 	}
 
-	// 2) Run migrations in "migrations/" (dev mode)
-	mgr, err := runtime.NewManager(db, "../migrations")
+	// Run migrations
+	mgr, err := runtime.NewManager(db, "prisma/migrations")
 	if err != nil {
-		panic(fmt.Errorf("load migrations: %w", err))
+		log.Fatalf("load migrations: %v", err)
 	}
 	if err := mgr.Up(); err != nil {
-		panic(fmt.Errorf("migrate up: %w", err))
+		log.Fatalf("migrate up: %v", err)
 	}
 	fmt.Println("✅ Migrations applied")
 
-	// 3) Create a new user via raw SQL
-	id := uuid.New()
-	now := time.Now()
-	_, err = db.Exec(
-		`INSERT INTO users
-           (id, first_name, last_name, email, password, created_at, updated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-		id, "Alice", "Smith", "alice@example.com", "hunter2", now, now,
-	)
-	if err != nil {
-		panic(fmt.Errorf("insert user: %w", err))
+	// Initialize Prisma client
+	client := prisma.NewClient()
+	if err := client.Prisma.Connect(); err != nil {
+		log.Fatalf("prisma connect: %v", err)
 	}
-	fmt.Printf("✅ Created user %s\n", id)
+	defer client.Prisma.Disconnect()
 
-	// 4) Query it back
-	var (
-		firstName, lastName, email, password string
-		createdAt, updatedAt                 time.Time
-		fetchedID                            uuid.UUID
-	)
-	row := db.QueryRow(
-		`SELECT id, first_name, last_name, email, password, created_at, updated_at
-         FROM users WHERE email = $1`,
-		"alice@example.com",
-	)
-	if err := row.Scan(&fetchedID, &firstName, &lastName, &email, &password, &createdAt, &updatedAt); err != nil {
-		panic(fmt.Errorf("fetch user: %w", err))
+	// Create a user
+	now := time.Now()
+	u, err := client.User.CreateOne(
+		prisma.User.ID.Set(uuid.New()),
+		prisma.User.FirstName.Set("Alice"),
+		prisma.User.LastName.Set("Smith"),
+		prisma.User.Email.Set("alice@example.com"),
+		prisma.User.Password.Set("hunter2"),
+		prisma.User.CreatedAt.Set(now),
+		prisma.User.UpdatedAt.Set(now),
+	).Exec(context.Background())
+	if err != nil {
+		log.Fatalf("create user: %v", err)
 	}
-	fmt.Printf("✅ Fetched user: %s %s %s (created %s)\n",
-		fetchedID, firstName, lastName, createdAt.Format(time.RFC3339),
-	)
+	fmt.Printf("✅ Created user: %s %s %s\n", u.ID, u.FirstName, u.LastName)
+
+	// Fetch the same user
+	fetched, err := client.User.FindUnique(
+		prisma.User.Email.Equals("alice@example.com"),
+	).Exec(context.Background())
+	if err != nil {
+		log.Fatalf("fetch user: %v", err)
+	}
+	fmt.Printf("✅ Fetched user by email: %s %s %s\n", fetched.ID, fetched.FirstName, fetched.LastName)
 }
