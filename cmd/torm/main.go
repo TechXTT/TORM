@@ -16,28 +16,18 @@ func main() {
 	cmd := os.Args[1]
 	switch cmd {
 	case "version":
-		fmt.Println("TORM version 0.4.1")
+		fmt.Println("TORM version 0.4.2")
 	case "help":
 		fmt.Println("Usage: torm <command> [options]")
-		fmt.Println("Commands: migrate, codegen")
-		fmt.Println("Options for migrate:")
-		fmt.Println("  -dsn string")
-		fmt.Println("        Postgres DSN (default $DATABASE_URL)")
-		fmt.Println("  -dir string")
-		fmt.Println("        migrations directory (default \"migrations\")")
-		fmt.Println("  -action string")
-		fmt.Println("        migration action: up or down (default \"up\")")
-		fmt.Println("Options for codegen:")
-		fmt.Println("  -schema-dir string")
-		fmt.Println("        schema definitions directory (default \"schema_defs\")")
-		fmt.Println("  -out string")
-		fmt.Println("        output directory for generated code (default \"pkg/schema\")")
-		fmt.Println("Options for version:")
-		fmt.Println("  -version")
-		fmt.Println("        print version information")
-		fmt.Println("Options for help:")
-		fmt.Println("  -help")
-		fmt.Println("        print help information")
+		fmt.Println("Commands: migrate, db, generate, studio")
+		fmt.Println("Options for each command:")
+		fmt.Println("  migrate <dev|deploy|reset|status> [--dir <migrations-dir>]")
+		fmt.Println("  db <command> [options]")
+		fmt.Println("  generate <command> [options]")
+		fmt.Println("  studio")
+		fmt.Println("  help")
+		fmt.Println("  version")
+		os.Exit(0)
 	case "migrate":
 		torm.RunMigrate(os.Args[2:])
 	case "db":
