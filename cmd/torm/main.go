@@ -1,123 +1,30 @@
 package main
 
 import (
-	"database/sql"
-	"flag"
 	"fmt"
-	"io/ioutil"
-	"log"
 	"os"
-	"os/exec"
-	"path/filepath"
 
-	"github.com/TechXTT/TORM/internal/dsl"
-	"github.com/TechXTT/TORM/pkg/migrate"
-	_ "github.com/lib/pq"
+	"github.com/TechXTT/TORM/pkg/torm"
 )
 
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Println("Usage: torm <command> [options]")
-		fmt.Println("Commands: migrate, codegen")
+		fmt.Println("Commands: migrate, db, generate, studio")
 		os.Exit(1)
 	}
-
 	cmd := os.Args[1]
 	switch cmd {
 	case "migrate":
-		fs := flag.NewFlagSet("migrate", flag.ExitOnError)
-		dsn := fs.String("dsn", os.Getenv("DATABASE_URL"), "Postgres DSN")
-		dir := fs.String("dir", "migrations", "migrations directory")
-		action := fs.String("action", "up", "migration action: up or down")
-		fs.Parse(os.Args[2:])
-
-		db, err := sql.Open("postgres", *dsn)
-		if err != nil {
-			log.Fatalf("open db: %v", err)
-		}
-		defer db.Close()
-
-		mgr, err := migrate.NewManager(db, *dir)
-		if err != nil {
-			log.Fatalf("load migrations: %v", err)
-		}
-
-		switch *action {
-		case "up":
-			if err := mgr.Up(); err != nil {
-				log.Fatalf("migrate up failed: %v", err)
-			}
-		case "down":
-			if err := mgr.Down(); err != nil {
-				log.Fatalf("migrate down failed: %v", err)
-			}
-		default:
-			fmt.Fprintf(os.Stderr, "unknown migrate action %q\n", *action)
-			os.Exit(1)
-		}
-		fmt.Println("Migration complete.")
-
-	case "codegen":
-		fs := flag.NewFlagSet("codegen", flag.ExitOnError)
-		schemaDir := fs.String("schema-dir", "schema_defs", "schema definitions directory")
-		outDir := fs.String("out", "pkg/schema", "output directory for generated code")
-		fs.Parse(os.Args[2:])
-
-		log.Printf("Scanning schema directory %s", *schemaDir)
-		entries, err := ioutil.ReadDir(*schemaDir)
-		if err != nil {
-			log.Fatalf("read schema dir: %v", err)
-		}
-
-		var allEntities []dsl.Entity
-		for _, fi := range entries {
-			log.Printf("Processing schema file: %s", fi.Name())
-			if fi.IsDir() || filepath.Ext(fi.Name()) != ".schema" {
-				continue
-			}
-			data, err := ioutil.ReadFile(filepath.Join(*schemaDir, fi.Name()))
-			if err != nil {
-				log.Fatalf("read schema file %s: %v", fi.Name(), err)
-			}
-			ast, err := dsl.ParseSchema(data)
-			if err != nil {
-				log.Fatalf("parse schema %s: %v", fi.Name(), err)
-			}
-			log.Printf("Found %d entities in %s", len(ast.Entities), fi.Name())
-			allEntities = append(allEntities, ast.Entities...)
-		}
-
-		generator, err := dsl.NewGenerator()
-		if err != nil {
-			log.Fatalf("initialize code generator: %v", err)
-		}
-		log.Printf("Generating %d entity models", len(allEntities))
-		ast := dsl.AST{Entities: allEntities}
-		if err := generator.Generate(ast, *outDir); err != nil {
-			log.Fatalf("code generation failed: %v", err)
-		}
-		fmt.Println("Code generation complete.")
-
-		// Format generated code
-		fmt.Println("Formatting generated code...")
-		fmtCmd := exec.Command("go", "fmt", "./"+*outDir)
-		fmtCmd.Stdout = os.Stdout
-		fmtCmd.Stderr = os.Stderr
-		if err := fmtCmd.Run(); err != nil {
-			log.Fatalf("go fmt failed: %v", err)
-		}
-
-		// Tidy module
-		fmt.Println("Running go mod tidy...")
-		tidyCmd := exec.Command("go", "mod", "tidy")
-		tidyCmd.Stdout = os.Stdout
-		tidyCmd.Stderr = os.Stderr
-		if err := tidyCmd.Run(); err != nil {
-			log.Fatalf("go mod tidy failed: %v", err)
-		}
-
+		torm.RunMigrate(os.Args[2:])
+	case "db":
+		torm.RunDB(os.Args[2:])
+	case "generate":
+		torm.RunGenerate(os.Args[2:])
+	case "studio":
+		torm.RunStudio()
 	default:
-		fmt.Fprintf(os.Stderr, "unknown command %q\n", cmd)
+		fmt.Fprintf(os.Stderr, "Unknown command %q\n", cmd)
 		os.Exit(1)
 	}
 }
