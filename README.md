@@ -1,4 +1,4 @@
-# TORM - v0.3.0-beta
+# TORM - v0.3.4-beta
 
 TORM is a modern, lightweight ORM for Go, designed for PostgreSQL with a focus on type-safety, migrations, and extensibility.
 
