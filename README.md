@@ -1,129 +1,138 @@
-# TORM - v0.4.2-beta
+# TORM – v0.5.0-alpha
 
-TORM is a modern, lightweight ORM for Go, designed for PostgreSQL with a focus on type-safety, migrations, and extensibility.
+TORM is a lightweight, idiomatic Go ORM for PostgreSQL, providing:
 
-## Features
-
-- **Database Connection**: Connect to PostgreSQL using `torm.Open`.
-- **Migrations CLI**: Manage schema changes via the `torm` binary (`migrate up/down`).
-- **Schema DSL & Code Generation**: Define schemas in Go and generate models & migrations.
-- **Type-Safe Query Builder**: Use generics for compile-time-safe queries (`Query[T]`).
-- **Plugin & Hook System**: Customize behavior with lifecycle hooks and middleware.
+- **Schema DSL & Code Generation**: Define your schema in Go, generate models and migrations.
+- **Introspective Migrations**: Auto-generate `CREATE TABLE` and `ALTER TABLE` stubs by comparing your DSL to the live database.
+- **Subcommand-based CLI**: Manage migrations (`dev`, `deploy`, `reset`, `status`) and codegen with a single `torm` binary.
+- **Type-Safe Query Builder**: Fluent, generic-driven queries (`db.Query[T]()`).
+- **Plugin & Hook System**: Extend lifecycle events, tracing, and middleware.
 - **Context & Tracing**: Full `context.Context` support and optional OpenTelemetry integration.
-- **Unit Testing**: Easily mock DB interactions with `sqlmock`.
+- **Testing Support**: Unit-test your database logic with `sqlmock` and run integration tests against a live Postgres.
+
+---
 
 ## Installation
-
-Install the library and CLI:
 
 ```bash
 go get github.com/TechXTT/TORM
 go install github.com/TechXTT/TORM/cmd/torm@latest
 ```
 
+Ensure that `$GOBIN` is on your `PATH` so the `torm` command is available.
+
+---
+
 ## CLI Usage
 
+### Migrations
+
+TORM’s migration CLI uses subcommands:
+
 ```bash
-# Apply all pending migrations
-torm migrate --dsn "postgres://user:pass@localhost/db?sslmode=disable" --dir ./migrations up
+# Apply and auto-generate new migrations from your schema (dev database)
+torm migrate dev \
+  --schema prisma/schema.prisma \
+  --dir migrations
 
-# Roll back the latest migration
-torm migrate --dsn ... down
+# Apply all pending migrations without schema diffs
+torm migrate deploy \
+  --schema prisma/schema.prisma \
+  --dir migrations
 
-# Generate schema code from DSL files
-torm codegen --schema-dir schema_defs --out ./pkg/schema
+# Drop and reapply all migrations
+torm migrate reset \
+  --schema prisma/schema.prisma \
+  --dir migrations
+
+# Show current version and pending/applied status
+torm migrate status \
+  --schema prisma/schema.prisma \
+  --dir migrations
 ```
 
-## Getting Started
+- `--schema` (optional): path to your Prisma-style schema file (default `prisma/schema.prisma`).
+- `--dir` (optional): directory holding your `.up.sql`/`.down.sql` scripts (default `migrations/`).
 
-### 1. Define Your Schema (DSL)
+### Code Generation
 
-Create a DSL file:
+Generate Go models from your DSL schema definitions:
+
+```bash
+torm codegen \
+  --schema-dir schema_defs \
+  --out pkg/schema
+```
+
+- `--schema-dir`: directory containing `.schema` files.
+- `--out`: target directory for generated Go model files.
+
+---
+
+## Defining Your Schema (DSL)
+
+Place your `.schema` files under `schema_defs/`:
 
 ```go
-// schema_defs/user.schema
-entity.User().
-    Field("ID", "int").
-    Field("Name", "string").NotNull().
-    Field("Email", "string").NotNull().
-    Field("CreatedAt", "time.Time").Default("now()")
+// schema_defs/post.schema
+entity.Post().
+  Field("ID", "uuid.UUID").PrimaryKey().Default("uuid_generate_v4()").
+  Field("Title", "string").NotNull().
+  Field("Content", "string").
+  Field("Published", "bool").Default("false").
+  Field("CreatedAt", "time.Time").Default("now()").
+  Field("UpdatedAt", "time.Time")
 ```
 
-Generate models:
+Each `Field` chain supports:
 
-```bash
-torm codegen --schema-dir schema_defs --out pkg/schema
-```
+- `.PrimaryKey()`, `.AutoIncrement()`
+- `.NotNull()`, `.Default("<expr>")`
+- `.Enum("A","B","C")`
+- Types: `string`, `int`, `bool`, `float64`, `time.Time`, `uuid.UUID`, and slices (`[]Type`).
 
-### 2. Write Migrations
+---
 
-Add SQL files under `migrations/`:
+## Typical Workflow
 
-```
-migrations/
-  0001_create_users.up.sql
-  0001_create_users.down.sql
-```
+1. **Edit** your DSL files in `schema_defs/`.
+2. **Run** migrations for your dev database (auto-generates SQL stubs):
+   ```bash
+   torm migrate dev --schema prisma/schema.prisma --dir migrations
+   ```
+3. **Inspect** and hand-tweak the generated `migrations/000X_*.up.sql` and `.down.sql` if needed.
+4. **Regenerate** Go models:
+   ```bash
+   torm codegen --schema-dir schema_defs --out pkg/schema
+   ```
+5. **Use** TORM in your application:
 
-### 3. Run Migrations
+   ```go
+   import "github.com/TechXTT/TORM/pkg/torm"
+   import "your/project/pkg/schema"
 
-```bash
-torm migrate --dsn "$DATABASE_URL" --dir migrations up
-```
+   db, err := torm.Open(dsn)
+   defer db.Close()
 
-### 4. Use TORM in Go
+   posts, err := db.
+     Query[schema.Post]().
+     From(schema.PostTable).
+     All(ctx)
+   ```
 
-```go
-package main
-
-import (
-    "context"
-    "fmt"
-    "log"
-
-    "github.com/TechXTT/TORM/pkg/torm"
-    "example/pkg/schema"
-)
-
-func main() {
-    dsn := "postgres://user:pass@localhost/db?sslmode=disable"
-    db, err := torm.Open(dsn)
-    if err != nil {
-        log.Fatal(err)
-    }
-    defer db.Close()
-
-    // Insert a user
-    _, err = db.Exec(context.Background(),
-        "INSERT INTO users(name, email) VALUES($1, $2)",
-        "Alice", "alice@example.com",
-    )
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    // Query users
-    users, err := db.Query[schema.User]().
-        From(schema.UserTable).
-        Select(schema.User{}.Fields()...).
-        Where("email = $1", "alice@example.com").
-        All(context.Background())
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    for _, u := range users {
-        fmt.Printf("%+v\n", u)
-    }
-}
-```
+---
 
 ## Testing
 
+- **Unit tests** with `sqlmock`: mock database calls in Go.
+- **Integration tests**: configure Postgres in CI, run `torm migrate dev`, then exercise your code.
+
 ```bash
-go test ./...
+go test ./pkg/... ./internal/... -v
 ```
+
+---
 
 ## License
 
-MIT License.
+MIT License.  
