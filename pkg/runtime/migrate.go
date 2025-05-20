@@ -107,38 +107,18 @@ func (m *Manager) deleteVersion(version int) error {
 }
 
 // NewManager returns a migration manager pointed at a directory.
-func NewManager(db *sql.DB, dir string) (*Manager, error) {
+func NewManager(dsn, dir string) (*Manager, error) {
+	db, err := sql.Open("postgres", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("open db: %w", err)
+	}
 	// Create migrations directory if it doesn't exist
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("create migrations dir: %w", err)
 	}
-
-	// // Generate initial migration stub if directory is empty
-	// files, err := ioutil.ReadDir(dir)
-	// if err != nil {
-	// 	return nil, fmt.Errorf("read migrations dir: %w", err)
-	// }
-	// if len(files) == 0 {
-	// 	upPath := filepath.Join(dir, "0001_init.up.sql")
-	// 	downPath := filepath.Join(dir, "0001_init.down.sql")
-	// 	if err := ioutil.WriteFile(upPath, []byte("-- initial migration\n"), 0644); err != nil {
-	// 		return nil, fmt.Errorf("write initial up migration: %w", err)
-	// 	}
-	// 	if err := ioutil.WriteFile(downPath, []byte("-- initial rollback\n"), 0644); err != nil {
-	// 		return nil, fmt.Errorf("write initial down migration: %w", err)
-	// 	}
-	// }
-
 	return &Manager{db: db, dir: dir}, nil
 }
 
-// The migrate dev command:
-
-// Reruns the existing migration history in the shadow database in order to detect schema drift (edited or deleted migration file, or a manual changes to the database schema)
-// Applies pending migrations to the shadow database (for example, new migrations created by colleagues)
-// Generates a new migration from any changes you made to the Prisma schema before running migrate dev
-// Applies all unapplied migrations to the development database and updates the _prisma_migrations table
-// Triggers the generation of artifacts (for example, Prisma Client)
 func (m *Manager) Dev() error {
 	// apply any pending up migrations
 	if err := m.ensureVersionTable(); err != nil {

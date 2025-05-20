@@ -7,8 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"text/template"
-
-	"github.com/TechXTT/TORM/pkg/torm/internal/metadata"
+	// adjust to actual Prisma Go client import path
 )
 
 // formatFile formats the given file using gofmt.
@@ -19,7 +18,7 @@ func formatFile(filePath string) error {
 
 var modelTemplate = template.Must(template.New("model").
 	Funcs(template.FuncMap{
-		"hasTime": func(fields []metadata.Field) bool {
+		"hasTime": func(fields []Field) bool {
 			for _, f := range fields {
 				if f.Type == "time.Time" {
 					return true
@@ -27,7 +26,7 @@ var modelTemplate = template.Must(template.New("model").
 			}
 			return false
 		},
-		"hasUUID": func(fields []metadata.Field) bool {
+		"hasUUID": func(fields []Field) bool {
 			for _, f := range fields {
 				if f.Type == "uuid.UUID" {
 					return true
@@ -53,7 +52,18 @@ import (
 {{- if hasTime .Fields }}
     "time"
 {{- end }}
+    "context"
+    "github.com/TechXTT/TORM/prisma"
 )
+
+// Client is a global Prisma DB client, ready to use.
+var Client = prisma.NewClient()
+
+func init() {
+    if err := Client.Prisma.Connect(context.Background()); err != nil {
+        panic(fmt.Sprintf("failed to connect to DB: %v", err))
+    }
+}
 
 type {{ .Name }} struct {
 {{- range .Fields }}
@@ -68,7 +78,7 @@ func Generate(schemaPath, outDir string) error {
 	if err != nil {
 		return err
 	}
-	ast, err := metadata.ParseSchema(data)
+	ast, err := ParseSchema(data)
 	if err != nil {
 		return err
 	}
