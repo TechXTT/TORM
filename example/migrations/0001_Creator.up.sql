@@ -1,9 +1,8 @@
 CREATE TABLE creator (
-    id TEXT PRIMARY KEY,
-    firstname TEXT NOT NULL,
-    lastname TEXT NOT NULL,
-    email TEXT NOT NULL,
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    firstname TEXT,
+    lastname TEXT,
+    email TEXT,
     createdat TIMESTAMP DEFAULT now(),
-    updatedat TIMESTAMP NOT NULL,
-    posts TEXT NOT NULL
+    updatedat TIMESTAMP DEFAULT now()
 );

@@ -1,10 +1,9 @@
 CREATE TABLE post (
-    id TEXT PRIMARY KEY,
-    title TEXT NOT NULL,
-    content TEXT NOT NULL,
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    title TEXT,
+    content TEXT,
     published BOOLEAN DEFAULT false,
     createdat TIMESTAMP DEFAULT now(),
-    updatedat TIMESTAMP NOT NULL,
-    authorid TEXT NOT NULL,
-    author TEXT NOT NULL
+    updatedat TIMESTAMP DEFAULT now(),
+    authorid TEXT
 );
