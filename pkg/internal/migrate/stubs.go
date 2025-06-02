@@ -215,19 +215,13 @@ func generateCreateTableSQL(ent generator.Entity) string {
 		col := strings.ToLower(f.Name)
 		colType := typeconv.MapGoTypeToSQL(f.Type)
 
-		// NOT NULL unless a default value is provided
-		notNull := ""
-		if f.Default == nil {
-			notNull = " NOT NULL"
-		}
-
 		// Default clause
 		defaultClause := ""
 		if f.Default != nil {
 			defaultClause = fmt.Sprintf(" DEFAULT %s", *f.Default)
 		}
 
-		lines = append(lines, fmt.Sprintf("    %s %s%s%s", col, colType, notNull, defaultClause))
+		lines = append(lines, fmt.Sprintf("    %s %s%s", col, colType, defaultClause))
 	}
 
 	return fmt.Sprintf("CREATE TABLE %s (\n%s\n);", tableName, strings.Join(lines, ",\n"))

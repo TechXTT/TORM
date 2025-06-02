@@ -2,6 +2,7 @@ package generator
 
 import (
 	"errors"
+	"fmt"
 	"regexp"
 	"strings"
 )
@@ -96,6 +97,26 @@ func ParseSchema(input []byte) (AST, error) {
 					}
 				}
 			}
+			// Handle PostgreSQL UUID annotation: @db.Uuid
+			if strings.Contains(line, "@db.Uuid") {
+				f.Type = "uuid.UUID"
+			}
+
+			// Handle @updatedAt like not null with default now()
+			if strings.Contains(line, "@updatedAt") {
+				f.NotNull = true
+				if f.Default == nil {
+					now := "now()"
+					f.Default = &now
+				}
+			}
+
+			// Skip relation and list fields (relations and arrays)
+			if strings.Contains(line, "@relation") || strings.HasSuffix(ptype, "[]") {
+				fmt.Println("Skipping relation or array field:", line, "or field type:", ptype)
+				continue
+			}
+
 			fields = append(fields, f)
 		}
 
