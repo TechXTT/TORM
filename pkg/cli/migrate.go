@@ -16,6 +16,7 @@ func NewMigrateCmd() *cobra.Command {
 	var (
 		schemaFile string
 		migrations string
+		models     string
 	)
 
 	cmd := &cobra.Command{
@@ -57,7 +58,7 @@ func NewMigrateCmd() *cobra.Command {
 					log.Printf("⚠️  warning: applying migrations failed: %v", err)
 				}
 				// always run codegen regardless of migration errors
-				return generator.Generate(cfg.SchemaDir, cfg.ModelOutDir)
+				return generator.Generate(cfg.SchemaDir, models)
 			case "deploy":
 				return mgr.Deploy()
 			case "reset":
@@ -75,6 +76,7 @@ func NewMigrateCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&schemaFile, "schema", "prisma/schema.prisma", "Prisma schema path")
-	cmd.Flags().StringVar(&migrations, "dir", "migrations", "Migrations directory")
+	cmd.Flags().StringVar(&migrations, "out-migrations", "torm/migrations", "Output directory for migrations")
+	cmd.Flags().StringVar(&models, "out-models", "torm/models", "Output directory for generated models")
 	return cmd
 }

@@ -77,7 +77,7 @@ func TestEnsureStubs_NewTables(t *testing.T) {
 	}
 
 	// Create migrations directory
-	migrationsDir := filepath.Join(tmpDir, "migrations")
+	migrationsDir := filepath.Join(tmpDir, "torm", "migrations")
 	if err := os.MkdirAll(migrationsDir, 0755); err != nil {
 		t.Fatalf("failed to create migrations dir: %v", err)
 	}
@@ -188,7 +188,7 @@ func TestGenerateStubs_AlterTable(t *testing.T) {
 	}
 
 	// Create migrations directory
-	migrationsDir := filepath.Join(tmpDir, "migrations")
+	migrationsDir := filepath.Join(tmpDir, "torm", "migrations")
 	if err := os.MkdirAll(migrationsDir, 0755); err != nil {
 		t.Fatalf("failed to create migrations dir: %v", err)
 	}

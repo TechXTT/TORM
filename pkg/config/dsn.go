@@ -11,10 +11,9 @@ import (
 
 // Config holds all settings for migrate and codegen.
 type Config struct {
-	DSN         string
-	SchemaPath  string
-	SchemaDir   string
-	ModelOutDir string
+	DSN        string
+	SchemaPath string
+	SchemaDir  string
 }
 
 // Load reads DSN from Prisma schema and fills defaults.
@@ -38,9 +37,8 @@ func Load(schemaFile string) (*Config, error) {
 	}
 
 	return &Config{
-		DSN:         dsn,
-		SchemaPath:  schemaFile,
-		SchemaDir:   "prisma/schema.prisma",
-		ModelOutDir: "models",
+		DSN:        dsn,
+		SchemaPath: schemaFile,
+		SchemaDir:  "prisma/schema.prisma",
 	}, nil
 }

@@ -14,16 +14,6 @@ import (
 	"github.com/TechXTT/TORM/pkg/internal/typeconv"
 )
 
-// containsString reports whether `target` is in `list`.
-func containsString(list []string, target string) bool {
-	for _, s := range list {
-		if s == target {
-			return true
-		}
-	}
-	return false
-}
-
 func EnsureStubs(db *sql.DB, schemaPath, migrationsDir string) error {
 	// Parse the Prisma schema into an AST
 	data, err := ioutil.ReadFile(schemaPath)
