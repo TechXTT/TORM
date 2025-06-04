@@ -54,9 +54,9 @@ func NewMigrateCmd() *cobra.Command {
 					log.Fatalf("ensure stubs failed: %v", err)
 				}
 				if err := mgr.Dev(); err != nil {
-					return err
+					log.Printf("⚠️  warning: applying migrations failed: %v", err)
 				}
-				// codegen after migrations
+				// always run codegen regardless of migration errors
 				return generator.Generate(cfg.SchemaDir, cfg.ModelOutDir)
 			case "deploy":
 				return mgr.Deploy()
