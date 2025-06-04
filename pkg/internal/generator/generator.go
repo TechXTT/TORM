@@ -40,6 +40,12 @@ var modelTemplate = template.Must(template.New("model").
 			}
 			return t
 		},
+		"export": func(s string) string {
+			if len(s) == 0 {
+				return s
+			}
+			return strings.ToUpper(s[:1]) + s[1:]
+		},
 	}).
 	Parse(`package models
 
@@ -56,7 +62,10 @@ import (
 
 type {{ .Name }} struct {
 {{- range .Fields }}
-    {{ .Name }} {{ goType .Type }}
+    {{ export .Name }} {{ goType .Type }}
+{{- end }}
+{{- range .Relations }}
+    {{ export .Name }} []{{ .Type }}
 {{- end }}
 }
 `))
@@ -64,6 +73,12 @@ type {{ .Name }} struct {
 var clientTemplate = template.Must(template.New("client").
 	Funcs(template.FuncMap{
 		"lower": strings.ToLower,
+		"export": func(s string) string {
+			if len(s) == 0 {
+				return s
+			}
+			return strings.ToUpper(s[:1]) + s[1:]
+		},
 	}).
 	Parse(`package models
 
@@ -75,12 +90,15 @@ import (
     "fmt"
     "io/ioutil"
     "os"
+    "reflect"
     "regexp"
     "strings"
     "sync"
+    "time"
 
     _ "github.com/lib/pq"
 )
+
 
 // Client wraps a database connection and provides per-model services.
 type Client struct {
@@ -122,6 +140,64 @@ func (c *Client) connect() (*sql.DB, error) {
     })
     return c.db, c.err
 }
+        
+
+// TimeOrZero implements sql.Scanner for time.Time fields, converting NULL to zero time.
+type TimeOrZero time.Time
+
+// Scan implements the sql.Scanner interface.
+func (t *TimeOrZero) Scan(value interface{}) error {
+    if value == nil {
+        *t = TimeOrZero(time.Time{})
+        return nil
+    }
+    tm, ok := value.(time.Time)
+    if !ok {
+        return fmt.Errorf("cannot scan type %T into TimeOrZero", value)
+    }
+    *t = TimeOrZero(tm)
+    return nil
+}
+
+// scanDest returns a slice of destination pointers for scanning into struct fields.
+// It substitutes sql.NullString for any string field, and TimeOrZero for any time.Time field.
+func scanDest(m interface{}) []interface{} {
+    v := reflect.ValueOf(m)
+    if v.Kind() != reflect.Ptr || v.IsNil() {
+        return nil
+    }
+    v = v.Elem()
+    if v.Kind() != reflect.Struct {
+        return nil
+    }
+
+    var dest []interface{}
+    for i := 0; i < v.NumField(); i++ {
+        field := v.Field(i)
+        fieldType := field.Type()
+
+        switch fieldType {
+        case reflect.TypeOf(time.Time{}):
+            // Use a TimeOrZero placeholder
+            var tmp TimeOrZero
+            dest = append(dest, &tmp)
+
+        case reflect.TypeOf(""):
+            // Use a sql.NullString placeholder instead of a bare string
+            var tmp sql.NullString
+            dest = append(dest, &tmp)
+
+        default:
+            if field.CanAddr() {
+                dest = append(dest, field.Addr().Interface())
+            } else {
+                var dummy interface{}
+                dest = append(dest, &dummy)
+            }
+        }
+    }
+    return dest
+}
 
 {{- range .Entities }}
 
@@ -147,12 +223,113 @@ func (svc *{{ .Name }}Service) FindUnique(ctx context.Context, where map[string]
     row := svc.db.QueryRowContext(ctx, query, args...)
     var m {{ .Name }}
     dest := scanDest(&m)
+    dest = dest[:len(cols)] // Ensure we only scan expected columns
     if err := row.Scan(dest...); err != nil {
         if err == sql.ErrNoRows {
             return nil, nil
         }
         return nil, err
     }
+    structVal := reflect.ValueOf(&m).Elem()
+    for i := 0; i < len(cols); i++ {
+        switch placeholder := dest[i].(type) {
+        case *sql.NullString:
+            if placeholder.Valid {
+                structVal.Field(i).SetString(placeholder.String)
+            } else {
+                structVal.Field(i).SetString("")
+            }
+        case *TimeOrZero:
+            t := time.Time(*placeholder)
+            structVal.Field(i).Set(reflect.ValueOf(t))
+        }
+    }
+    // Load one‐level relations
+    {{- $ent := . }}
+    {{- range .Relations }}
+        {{- if .JoinTableName }}
+            // load many-to-many {{ .Type }} via join table {{ .JoinTableName }}
+            {
+            colsRel := []string{ {{- range $i,$f := call $.EntitiesMap .Type }}{{if $i}}, {{end}}"{{lower $f.Name}}"{{- end }} }
+            rows{{ .Name }}, err := svc.db.QueryContext(ctx,
+                fmt.Sprintf(
+                    "SELECT %s FROM %s t JOIN %s jt ON t.id = jt.%s_id WHERE jt.%s_id = $1",
+                    strings.Join(colsRel, ", "),
+                    "{{ lower .Type }}",
+                    "{{ lower .JoinTableName }}",
+                    "{{ lower .Type }}",
+                    "{{ lower $ent.Name }}",
+                ),
+                m.Id,
+            )
+            if err == nil {
+                defer rows{{ .Name }}.Close()
+                for rows{{ .Name }}.Next() {
+                    var related {{ .Type }}
+                    destRel := scanDest(&related)
+                    destRel = destRel[:len(colsRel)]
+                    if err := rows{{ .Name }}.Scan(destRel...); err == nil {
+                        // Copy scanned values into struct fields
+                        structValRel := reflect.ValueOf(&related).Elem()
+                        for i := 0; i < len(colsRel); i++ {
+                            switch placeholder := destRel[i].(type) {
+                            case *sql.NullString:
+                                if placeholder.Valid {
+                                    structValRel.Field(i).SetString(placeholder.String)
+                                } else {
+                                    structValRel.Field(i).SetString("")
+                                }
+                            case *TimeOrZero:
+                                t := time.Time(*placeholder)
+                                structValRel.Field(i).Set(reflect.ValueOf(t))
+                            }
+                        }
+                        m.{{ export .Name }} = append(m.{{ export .Name }}, related)
+                    }
+                }
+            }
+            }
+        {{- else }}
+            // one-to-many load of {{ .Type }}
+            {
+            colsRel := []string{ {{- range $i,$f := call $.EntitiesMap .Type }}{{if $i}}, {{end}}"{{lower $f.Name}}"{{- end }} }
+            rows{{ .Name }}, err := svc.db.QueryContext(ctx,
+                fmt.Sprintf("SELECT %s FROM %s WHERE %sid = $1",
+                    strings.Join(colsRel, ", "),
+                    "{{ lower .Type }}",
+                    "{{ lower $ent.Name }}",
+                ),
+                m.Id,
+            )
+            if err == nil {
+                defer rows{{ .Name }}.Close()
+                for rows{{ .Name }}.Next() {
+                    var related {{ .Type }}
+                    destRel := scanDest(&related)
+                    destRel = destRel[:len(colsRel)]
+                    if err := rows{{ .Name }}.Scan(destRel...); err == nil {
+                        // Copy scanned values into struct fields
+                        structValRel := reflect.ValueOf(&related).Elem()
+                        for i := 0; i < len(colsRel); i++ {
+                            switch placeholder := destRel[i].(type) {
+                            case *sql.NullString:
+                                if placeholder.Valid {
+                                    structValRel.Field(i).SetString(placeholder.String)
+                                } else {
+                                    structValRel.Field(i).SetString("")
+                                }
+                            case *TimeOrZero:
+                                t := time.Time(*placeholder)
+                                structValRel.Field(i).Set(reflect.ValueOf(t))
+                            }
+                        }
+                        m.{{ export .Name }} = append(m.{{ export .Name }}, related)
+                    }
+                }
+            }
+            }
+        {{- end }}
+    {{- end }}
     return &m, nil
 }
 
@@ -168,9 +345,143 @@ func (svc *{{ .Name }}Service) FindUniqueOrThrow(ctx context.Context, where map[
     return rec, nil
 }
 
-// FindFirst retrieves the first {{ .Name }} matching filters.
-func (svc *{{ .Name }}Service) FindFirst(ctx context.Context, where map[string]interface{}, orderBy []string, skip, take int) ([]*{{ .Name }}, error) {
+// FindFirst retrieves a single {{ .Name }} matching filters, or nil if none.
+func (svc *{{ .Name }}Service) FindFirst(ctx context.Context, where map[string]interface{}) (*{{ .Name }}, error) {
     whereClause, args := buildWhere(where)
+    cols := []string{ {{- range $i,$f := .Fields }}{{if $i}}, {{end}}"{{lower $f.Name}}"{{- end }} }
+    query := fmt.Sprintf("SELECT %s FROM %s", strings.Join(cols, ", "), "{{lower .Name}}")
+    if whereClause != "" {
+        query += " WHERE " + whereClause
+    }
+    row := svc.db.QueryRowContext(ctx, query, args...)
+    var m {{ .Name }}
+    dest := scanDest(&m)
+    dest = dest[:len(cols)] // Ensure we only scan expected columns
+    if err := row.Scan(dest...); err != nil {
+        if err == sql.ErrNoRows {
+            return nil, nil
+        }
+        return nil, err
+    }
+    structVal := reflect.ValueOf(&m).Elem()
+    for i := 0; i < len(cols); i++ {
+        switch placeholder := dest[i].(type) {
+        case *sql.NullString:
+            if placeholder.Valid {
+                structVal.Field(i).SetString(placeholder.String)
+            } else {
+                structVal.Field(i).SetString("")
+            }
+        case *TimeOrZero:
+            t := time.Time(*placeholder)
+            structVal.Field(i).Set(reflect.ValueOf(t))
+        }
+    }
+    // Load one‐level relations
+    {{- $ent := . }}
+    {{- range .Relations }}
+        {{- if .JoinTableName }}
+            // load many-to-many {{ .Type }} via join table {{ .JoinTableName }}
+            {
+            colsRel := []string{ {{- range $i,$f := call $.EntitiesMap .Type }}{{if $i}}, {{end}}"{{lower $f.Name}}"{{- end }} }
+            rows{{ .Name }}, err := svc.db.QueryContext(ctx,
+                fmt.Sprintf(
+                    "SELECT %s FROM %s t JOIN %s jt ON t.id = jt.%s_id WHERE jt.%s_id = $1",
+                    strings.Join(colsRel, ", "),
+                    "{{ lower .Type }}",
+                    "{{ lower .JoinTableName }}",
+                    "{{ lower .Type }}",
+                    "{{ lower $ent.Name }}",
+                ),
+                m.Id,
+            )
+            if err == nil {
+                defer rows{{ .Name }}.Close()
+                for rows{{ .Name }}.Next() {
+                    var related {{ .Type }}
+                    destRel := scanDest(&related)
+                    destRel = destRel[:len(colsRel)]
+                    if err := rows{{ .Name }}.Scan(destRel...); err == nil {
+                        // Copy scanned values into struct fields
+                        structValRel := reflect.ValueOf(&related).Elem()
+                        for i := 0; i < len(colsRel); i++ {
+                            switch placeholder := destRel[i].(type) {
+                            case *sql.NullString:
+                                if placeholder.Valid {
+                                    structValRel.Field(i).SetString(placeholder.String)
+                                } else {
+                                    structValRel.Field(i).SetString("")
+                                }
+                            case *TimeOrZero:
+                                t := time.Time(*placeholder)
+                                structValRel.Field(i).Set(reflect.ValueOf(t))
+                            }
+                        }
+                        m.{{ export .Name }} = append(m.{{ export .Name }}, related)
+                    }
+                }
+            }
+            }
+        {{- else }}
+            // one-to-many load of {{ .Type }}
+            {
+            colsRel := []string{ {{- range $i,$f := call $.EntitiesMap .Type }}{{if $i}}, {{end}}"{{lower $f.Name}}"{{- end }} }
+            rows{{ .Name }}, err := svc.db.QueryContext(ctx,
+                fmt.Sprintf("SELECT %s FROM %s WHERE %sid = $1",
+                    strings.Join(colsRel, ", "),
+                    "{{ lower .Type }}",
+                    "{{ lower $ent.Name }}",
+                ),
+                m.Id,
+            )
+            if err == nil {
+                defer rows{{ .Name }}.Close()
+                for rows{{ .Name }}.Next() {
+                    var related {{ .Type }}
+                    destRel := scanDest(&related)
+                    destRel = destRel[:len(colsRel)]
+                    if err := rows{{ .Name }}.Scan(destRel...); err == nil {
+                        // Copy scanned values into struct fields
+                        structValRel := reflect.ValueOf(&related).Elem()
+                        for i := 0; i < len(colsRel); i++ {
+                            switch placeholder := destRel[i].(type) {
+                            case *sql.NullString:
+                                if placeholder.Valid {
+                                    structValRel.Field(i).SetString(placeholder.String)
+                                } else {
+                                    structValRel.Field(i).SetString("")
+                                }
+                            case *TimeOrZero:
+                                t := time.Time(*placeholder)
+                                structValRel.Field(i).Set(reflect.ValueOf(t))
+                            }
+                        }
+                        m.{{ export .Name }} = append(m.{{ export .Name }}, related)
+                    }
+                }
+            }
+            }
+        {{- end }}
+    {{- end }}
+    return &m, nil
+}
+
+// FindFirstOrThrow retrieves the first {{ .Name }} or errors if none.
+func (svc *{{ .Name }}Service) FindFirstOrThrow(ctx context.Context, where map[string]interface{}) (*{{ .Name }}, error) {
+    rec, err := svc.FindFirst(ctx, where)
+    if err != nil {
+        return nil, err
+    }
+    if rec == nil {
+        return nil, fmt.Errorf("no {{ .Name }} found")
+    }
+    return rec, nil
+}
+
+// FindMany retrieves multiple {{ .Name }} records matching filters.
+func (svc *{{ .Name }}Service) FindMany(ctx context.Context, where map[string]interface{}, orderBy []string, skip, take int) ([]*{{ .Name }}, error) {
+    whereClause, args := buildWhere(where)
+    {
     cols := []string{ {{- range $i,$f := .Fields }}{{if $i}}, {{end}}"{{lower $f.Name}}"{{- end }} }
     query := fmt.Sprintf("SELECT %s FROM %s", strings.Join(cols, ", "), "{{lower .Name}}")
     if whereClause != "" {
@@ -185,7 +496,7 @@ func (svc *{{ .Name }}Service) FindFirst(ctx context.Context, where map[string]i
     if skip > 0 {
         query += fmt.Sprintf(" OFFSET %d", skip)
     }
-    rows, err := svc.db.QueryContext(ctx, query, append(args, )...)
+    rows, err := svc.db.QueryContext(ctx, query, args...)
     if err != nil {
         return nil, err
     }
@@ -194,86 +505,232 @@ func (svc *{{ .Name }}Service) FindFirst(ctx context.Context, where map[string]i
     for rows.Next() {
         var m {{ .Name }}
         dest := scanDest(&m)
+        dest = dest[:len(cols)] // Ensure we only scan expected columns
         if err := rows.Scan(dest...); err != nil {
             return nil, err
         }
+        structVal := reflect.ValueOf(&m).Elem()
+        for i := 0; i < len(cols); i++ {
+            switch placeholder := dest[i].(type) {
+            case *sql.NullString:
+                if placeholder.Valid {
+                    structVal.Field(i).SetString(placeholder.String)
+                } else {
+                    structVal.Field(i).SetString("")
+                }
+            case *TimeOrZero:
+                t := time.Time(*placeholder)
+                structVal.Field(i).Set(reflect.ValueOf(t))
+            }
+        }
+        // Load one‐level relations
+        {{- $ent := . }}
+        {{- range .Relations }}
+            {{- if .JoinTableName }}
+                // load many-to-many {{ .Type }} via join table {{ .JoinTableName }}
+                {
+                colsRel := []string{ {{- range $i,$f := call $.EntitiesMap .Type }}{{if $i}}, {{end}}"{{lower $f.Name}}"{{- end }} }
+                rows{{ .Name }}, err := svc.db.QueryContext(ctx,
+                    fmt.Sprintf(
+                        "SELECT %s FROM %s t JOIN %s jt ON t.id = jt.%s_id WHERE jt.%s_id = $1",
+                        strings.Join(colsRel, ", "),
+                        "{{ lower .Type }}",
+                        "{{ lower .JoinTableName }}",
+                        "{{ lower .Type }}",
+                        "{{ lower $ent.Name }}",
+                    ),
+                    m.Id,
+                )
+                if err == nil {
+                    defer rows{{ .Name }}.Close()
+                    for rows{{ .Name }}.Next() {
+                        var related {{ .Type }}
+                        destRel := scanDest(&related)
+                        destRel = destRel[:len(colsRel)]
+                        if err := rows{{ .Name }}.Scan(destRel...); err == nil {
+                            // Copy scanned values into struct fields
+                            structValRel := reflect.ValueOf(&related).Elem()
+                            for i := 0; i < len(colsRel); i++ {
+                                switch placeholder := destRel[i].(type) {
+                                case *sql.NullString:
+                                    if placeholder.Valid {
+                                        structValRel.Field(i).SetString(placeholder.String)
+                                    } else {
+                                        structValRel.Field(i).SetString("")
+                                    }
+                                case *TimeOrZero:
+                                    t := time.Time(*placeholder)
+                                    structValRel.Field(i).Set(reflect.ValueOf(t))
+                                }
+                            }
+                            m.{{ export .Name }} = append(m.{{ export .Name }}, related)
+                        } else {
+                            fmt.Println("Error scanning {{ .Type }}:", err)
+                        }
+                    }
+                }
+                }
+            {{- else }}
+                // one-to-many load of {{ .Type }}
+                {
+                colsRel := []string{ {{- range $i,$f := call $.EntitiesMap .Type }}{{if $i}}, {{end}}"{{lower $f.Name}}"{{- end }} }
+                rows{{ .Name }}, err := svc.db.QueryContext(ctx,
+                    fmt.Sprintf("SELECT %s FROM %s WHERE %sid = $1",
+                        strings.Join(colsRel, ", "),
+                        "{{ lower .Type }}",
+                        "{{ lower $ent.Name }}",
+                    ),
+                    m.Id,
+                )
+                if err == nil {
+                    defer rows{{ .Name }}.Close()
+                    for rows{{ .Name }}.Next() {
+                        var related {{ .Type }}
+                        destRel := scanDest(&related)
+                        destRel = destRel[:len(colsRel)]
+                        if err := rows{{ .Name }}.Scan(destRel...); err == nil {
+                            // Copy scanned values into struct fields
+                            structValRel := reflect.ValueOf(&related).Elem()
+                            for i := 0; i < len(colsRel); i++ {
+                                switch placeholder := destRel[i].(type) {
+                                case *sql.NullString:
+                                    if placeholder.Valid {
+                                        structValRel.Field(i).SetString(placeholder.String)
+                                    } else {
+                                        structValRel.Field(i).SetString("")
+                                    }
+                                case *TimeOrZero:
+                                    t := time.Time(*placeholder)
+                                    structValRel.Field(i).Set(reflect.ValueOf(t))
+                                }
+                            }
+                            m.{{ export .Name }} = append(m.{{ export .Name }}, related)
+                        } else {
+                            fmt.Println("Error scanning {{ .Type }}:", err)
+                        }
+                    }
+                }
+                }
+            {{- end }}
+        {{- end }}
         result = append(result, &m)
     }
     return result, nil
-}
-
-// FindFirstOrThrow retrieves the first {{ .Name }} or errors if none.
-func (svc *{{ .Name }}Service) FindFirstOrThrow(ctx context.Context, where map[string]interface{}, orderBy []string, skip, take int) (*{{ .Name }}, error) {
-    recs, err := svc.FindFirst(ctx, where, orderBy, skip, take)
-    if err != nil {
-        return nil, err
     }
-    if len(recs) == 0 {
-        return nil, fmt.Errorf("no {{ .Name }} found")
+}
+
+// Create inserts a new {{ .Name }} record and updates the passed model with any returned values.
+func (svc *{{ .Name }}Service) Create(ctx context.Context, m *{{ .Name }}) error {
+    // Extract values from the struct into a map
+    data := make(map[string]interface{})
+    {{- range .Fields }}
+    {{- if not .PrimaryKey }}
+    data["{{lower .Name}}"] = m.{{export .Name}}
+    {{- end }}
+    {{- end }}
+
+    // Remove empty string entries so they won't be inserted
+    for k, v := range data {
+        if str, ok := v.(string); ok {
+            if str == "" {
+                delete(data, k)
+            }
+        }
     }
-    return recs[0], nil
-}
 
-// FindMany retrieves multiple {{ .Name }} records.
-func (svc *{{ .Name }}Service) FindMany(ctx context.Context, where map[string]interface{}, orderBy []string, skip, take int) ([]*{{ .Name }}, error) {
-    return svc.FindFirst(ctx, where, orderBy, skip, take)
-}
-
-// Create inserts a new {{ .Name }} record.
-func (svc *{{ .Name }}Service) Create(ctx context.Context, data map[string]interface{}) (*{{ .Name }}, error) {
     cols, placeholders, args := buildInsert(data)
     colsList := strings.Join(cols, ", ")
     phList := strings.Join(placeholders, ", ")
-    query := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s) RETURNING %s", "{{lower .Name}}", colsList, phList, colsList)
+    // Return all columns to repopulate the struct
+    allCols := []string{ {{- range $i,$f := .Fields }}{{if $i}}, {{end}}"{{lower $f.Name}}"{{- end }} }
+    query := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s) RETURNING %s", "{{lower .Name}}", colsList, phList, strings.Join(allCols, ", "))
     row := svc.db.QueryRowContext(ctx, query, args...)
-    var m {{ .Name }}
-    dest := scanDest(&m)
+
+    dest := scanDest(m)
     if err := row.Scan(dest...); err != nil {
-        return nil, err
+        return err
     }
-    return &m, nil
+    structVal := reflect.ValueOf(m).Elem()
+    for i := 0; i < structVal.NumField(); i++ {
+        switch placeholder := dest[i].(type) {
+        case *sql.NullString:
+            if placeholder.Valid {
+                structVal.Field(i).SetString(placeholder.String)
+            } else {
+                structVal.Field(i).SetString("")
+            }
+        case *TimeOrZero:
+            t := time.Time(*placeholder)
+            structVal.Field(i).Set(reflect.ValueOf(t))
+        }
+    }
+    return nil
 }
 
-// Update modifies an existing {{ .Name }} record.
-func (svc *{{ .Name }}Service) Update(ctx context.Context, where, data map[string]interface{}) (*{{ .Name }}, error) {
+// Update modifies an existing {{ .Name }} record and updates the passed model pointer.
+func (svc *{{ .Name }}Service) Update(ctx context.Context, where map[string]interface{}, m *{{ .Name }}) error {
+    // Extract new values from the struct into a map
+    data := make(map[string]interface{})
+    {{- range .Fields }}
+    {{- if not .PrimaryKey }}
+    data["{{lower .Name}}"] = m.{{export .Name}}
+    {{- end }}
+    {{- end }}
+
     setClause, setArgs := buildSet(data, 1)
     whereClause, whereArgs := buildWhereOffset(where, len(setArgs)+1)
     args := append(setArgs, whereArgs...)
-    cols := []string{ {{- range $i,$f := .Fields }}{{if $i}}, {{end}}"{{lower $f.Name}}"{{- end }} }
-    query := fmt.Sprintf("UPDATE %s SET %s WHERE %s RETURNING %s", "{{lower .Name}}", setClause, whereClause, strings.Join(cols, ", "))
+    allCols := []string{ {{- range $i,$f := .Fields }}{{if $i}}, {{end}}"{{lower $f.Name}}"{{- end }} }
+    query := fmt.Sprintf("UPDATE %s SET %s WHERE %s RETURNING %s", "{{lower .Name}}", setClause, whereClause, strings.Join(allCols, ", "))
     row := svc.db.QueryRowContext(ctx, query, args...)
-    var m {{ .Name }}
-    dest := scanDest(&m)
+
+    dest := scanDest(m)
     if err := row.Scan(dest...); err != nil {
-        return nil, err
+        return err
     }
-    return &m, nil
+    structVal := reflect.ValueOf(m).Elem()
+    for i := 0; i < structVal.NumField(); i++ {
+        switch placeholder := dest[i].(type) {
+        case *sql.NullString:
+            if placeholder.Valid {
+                structVal.Field(i).SetString(placeholder.String)
+            } else {
+                structVal.Field(i).SetString("")
+            }
+        case *TimeOrZero:
+            t := time.Time(*placeholder)
+            structVal.Field(i).Set(reflect.ValueOf(t))
+        }
+    }
+    return nil
 }
 
-// Upsert creates or updates a {{ .Name }} record in a transaction.
-func (svc *{{ .Name }}Service) Upsert(ctx context.Context, where, createData, updateData map[string]interface{}) (*{{ .Name }}, error) {
+// Upsert creates or updates a {{ .Name }} record and updates the passed model pointer.
+func (svc *{{ .Name }}Service) Upsert(ctx context.Context, where map[string]interface{}, m *{{ .Name }}) error {
     tx, err := svc.db.BeginTx(ctx, nil)
     if err != nil {
-        return nil, err
+        return err
     }
-    rec, err := svc.FindUnique(ctx, where)
+    existing, err := svc.FindUnique(ctx, where)
     if err != nil {
         tx.Rollback()
-        return nil, err
+        return err
     }
-    if rec == nil {
-        rec, err = svc.Create(ctx, createData)
+    if existing == nil {
+        if err := svc.Create(ctx, m); err != nil {
+            tx.Rollback()
+            return err
+        }
     } else {
-        rec, err = svc.Update(ctx, where, updateData)
-    }
-    if err != nil {
-        tx.Rollback()
-        return nil, err
+        if err := svc.Update(ctx, where, m); err != nil {
+            tx.Rollback()
+            return err
+        }
     }
     if err := tx.Commit(); err != nil {
-        return nil, err
+        return err
     }
-    return rec, nil
+    return nil
 }
 
 // Delete removes a {{ .Name }} record by unique filter.
@@ -325,17 +782,49 @@ func (svc *{{ .Name }}Service) CreateMany(ctx context.Context, data []map[string
     return res.RowsAffected()
 }
 
-// UpdateMany modifies multiple {{ .Name }} records.
-func (svc *{{ .Name }}Service) UpdateMany(ctx context.Context, where, data map[string]interface{}) (int64, error) {
-    setClause, setArgs := buildSet(data, 1)
-    whereClause, whereArgs := buildWhereOffset(where, len(setArgs)+1)
-    args := append(setArgs, whereArgs...)
-    query := fmt.Sprintf("UPDATE %s SET %s WHERE %s", "{{lower .Name}}", setClause, whereClause)
-    res, err := svc.db.ExecContext(ctx, query, args...)
-    if err != nil {
-        return 0, err
+// UpdateMany modifies multiple {{ .Name }} records matching 'where' and updates each passed model pointer.
+func (svc *{{ .Name }}Service) UpdateMany(ctx context.Context, where []map[string]interface{}, ms []*{{ .Name }}) (int64, error) {
+    if len(where) != len(ms) {
+        return 0, fmt.Errorf("mismatch between filter list and model list length")
     }
-    return res.RowsAffected()
+    var totalAffected int64 = 0
+    for i, m := range ms {
+        filter := where[i]
+        data := make(map[string]interface{})
+        {{- range .Fields }}
+        {{- if not .PrimaryKey }}
+        data["{{lower .Name}}"] = m.{{export .Name}}
+        {{- end }}
+        {{- end }}
+
+        setClause, setArgs := buildSet(data, 1)
+        whereClause, whereArgs := buildWhereOffset(filter, len(setArgs)+1)
+        args := append(setArgs, whereArgs...)
+        allCols := []string{ {{- range $i,$f := .Fields }}{{if $i}}, {{end}}"{{lower $f.Name}}"{{- end }} }
+        query := fmt.Sprintf("UPDATE %s SET %s WHERE %s RETURNING %s", "{{lower .Name}}", setClause, whereClause, strings.Join(allCols, ", "))
+        row := svc.db.QueryRowContext(ctx, query, args...)
+
+        dest := scanDest(m)
+        if err := row.Scan(dest...); err != nil {
+            return totalAffected, err
+        }
+        structVal := reflect.ValueOf(m).Elem()
+        for i := 0; i < structVal.NumField(); i++ {
+            switch placeholder := dest[i].(type) {
+            case *sql.NullString:
+                if placeholder.Valid {
+                    structVal.Field(i).SetString(placeholder.String)
+                } else {
+                    structVal.Field(i).SetString("")
+                }
+            case *TimeOrZero:
+                t := time.Time(*placeholder)
+                structVal.Field(i).Set(reflect.ValueOf(t))
+            }
+        }
+        totalAffected++
+    }
+    return totalAffected, nil
 }
 
 // DeleteMany removes multiple {{ .Name }} records.
@@ -351,7 +840,6 @@ func (svc *{{ .Name }}Service) DeleteMany(ctx context.Context, where map[string]
 
 // Aggregate computes SQL aggregates for {{ .Name }}.
 func (svc *{{ .Name }}Service) Aggregate(ctx context.Context, where map[string]interface{}, agg map[string][]string) (map[string]interface{}, error) {
-    // agg keys: "_count", "_avg", "_sum", "_min", "_max"
     selectClauses := []string{}
     for key, fields := range agg {
         for _, f := range fields {
@@ -364,7 +852,6 @@ func (svc *{{ .Name }}Service) Aggregate(ctx context.Context, where map[string]i
         query += " WHERE " + whereClause
     }
     row := svc.db.QueryRowContext(ctx, query, args...)
-    // Scan into generic map
     cols := strings.Split(strings.Join(selectClauses, ", "), ", ")
     vals := make([]interface{}, len(cols))
     result := map[string]interface{}{}
@@ -484,12 +971,6 @@ func buildSet(data map[string]interface{}, start int) (string, []interface{}) {
     }
     return strings.Join(clauses, ", "), args
 }
-
-// scanDest returns a slice of pointers for scanning into struct fields
-func scanDest(m interface{}) []interface{} {
-    // leverage reflection or generate this per-model if needed
-    return []interface{}{ /* generated per-model field pointers */ }
-}
 `))
 
 // Generate reads a Prisma schema and outputs Go client code.
@@ -506,6 +987,36 @@ func Generate(schemaPath, outDir string) error {
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return err
 	}
+
+	// Generate enums.go with Go enum types
+	enumFile := filepath.Join(outDir, "enums.go")
+	ef, err := os.Create(enumFile)
+	if err != nil {
+		return err
+	}
+	defer ef.Close()
+
+	// Write package and import (none needed for simple string enums)
+	fmt.Fprintln(ef, "package models")
+	fmt.Fprintln(ef, "\n// Code generated by TORM; DO NOT EDIT.\n")
+
+	for _, enum := range ast.Enums {
+		// Define type as string
+		fmt.Fprintf(ef, "type %s string\n\n", enum.Name)
+		// Define constants
+		fmt.Fprintf(ef, "const (\n")
+		for _, val := range enum.Values {
+			// Convert enum value to upper-case or CamelCase
+			// Use strings.Title(strings.ToLower(val))
+			constName := enum.Name + strings.Title(strings.ToLower(val))
+			fmt.Fprintf(ef, "    %s %s = \"%s\"\n", constName, enum.Name, val)
+		}
+		fmt.Fprintf(ef, ")\n\n")
+	}
+	if err := formatFile(enumFile); err != nil {
+		return err
+	}
+	fmt.Printf("Generated enums %s\n", enumFile)
 
 	// generate one file per entity
 	for _, ent := range ast.Entities {
@@ -538,7 +1049,20 @@ func Generate(schemaPath, outDir string) error {
 		return err
 	}
 	defer cf.Close()
-	if err := clientTemplate.Execute(cf, ast); err != nil {
+
+	// Build EntitiesMap: function for lookup of entity fields by name
+	dataMap := map[string]interface{}{
+		"Entities": ast.Entities,
+		"EntitiesMap": func(name string) []Field {
+			for _, e := range ast.Entities {
+				if e.Name == name {
+					return e.Fields
+				}
+			}
+			return nil
+		},
+	}
+	if err := clientTemplate.Execute(cf, dataMap); err != nil {
 		return err
 	}
 	if err := formatFile(clientPath); err != nil {
