@@ -5,7 +5,7 @@ import (
 )
 
 func version() string {
-	return "v0.5.3-alpha"
+	return "v1.0.0"
 }
 
 func help() string {
