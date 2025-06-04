@@ -46,10 +46,10 @@ jobs:
         go install golang.org/x/lint/golint@latest
         golint ./...
 
-    # - name: Test
-    #   env:
-    #     DATABASE_URL: postgres://postgres:password@localhost:5432/postgres?sslmode=disable
-    #   run: go test ./pkg/migrate ./internal/core -v
+    - name: Test
+      env:
+        DATABASE_URL: postgres://postgres:password@localhost:5432/postgres?sslmode=disable
+      run: go test ./...
 
     - name: Build
       run: |
