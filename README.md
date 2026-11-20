@@ -2,7 +2,7 @@
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/TechXTT/TORM/v2.svg)](https://pkg.go.dev/github.com/TechXTT/TORM/v2)
 [![Release](https://img.shields.io/github/v/release/TechXTT/TORM?label=version)](https://github.com/TechXTT/TORM/releases)
-[![Go Report Card](https://goreportcard.com/badge/github.com/TechXTT/TORM/v2)](https://goreportcard.com/report/github.com/TechXTT/TORM/v2)
+[![Build, test, and release](https://github.com/TechXTT/TORM/actions/workflows/build.yaml/badge.svg?branch=main)](https://github.com/TechXTT/TORM/actions/workflows/build.yaml)
 
 TORM is a schema-driven Go ORM for PostgreSQL. Define your models and relationships in Prisma Schema Language, generate a typed Go client, and review SQL migrations before applying them. The CLI is a Go binary, and the generated client uses Go’s `database/sql`.
 
