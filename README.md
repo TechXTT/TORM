@@ -1,22 +1,86 @@
 # TORM
 
-TORM is a Go ORM for PostgreSQL. Define models in Prisma Schema Language, generate a typed Go client, and review the SQL migrations before running them. TORM runs as a Go binary and uses Go's `database/sql` at runtime.
+[![Go Reference](https://pkg.go.dev/badge/github.com/TechXTT/TORM/v2.svg)](https://pkg.go.dev/github.com/TechXTT/TORM/v2)
+[![Release](https://img.shields.io/github/v/release/TechXTT/TORM?label=version)](https://github.com/TechXTT/TORM/releases)
+[![Go Report Card](https://goreportcard.com/badge/github.com/TechXTT/TORM/v2)](https://goreportcard.com/report/github.com/TechXTT/TORM/v2)
 
-## Quickstart
+TORM is a schema-driven Go ORM for PostgreSQL. Define your models and relationships in Prisma Schema Language, generate a typed Go client, and review SQL migrations before applying them. The CLI is a Go binary, and the generated client uses Go’s `database/sql`.
 
-Use Go 1.23 or newer and PostgreSQL 16–18. The CI matrix keeps the previous Go minimum for build compatibility. Use a Go release that still receives security updates for production builds.
+## Table of contents
 
-1. From the repository root, run `go install ./cmd/torm` and make sure the Go binary directory is on your PATH.
-2. Create two empty databases, `torm_example` and `torm_shadow`, on the same PostgreSQL major version. Give the development role access to both and permission to create a schema in the shadow database. In `example/`, copy `.env.example` to `.env` and set `DATABASE_URL` and `TORM_SHADOW_DATABASE_URL`. Use a dedicated shadow database with a distinct name and an empty `public` schema.
-3. Validate the schema, regenerate the Go client, and write the initial migration.
+1. [Features](#features)
+2. [Installation](#installation)
+3. [Getting started](#getting-started)
+4. [Command reference](#command-reference)
+5. [Configuration](#configuration)
+6. [PostgreSQL schema support](#postgresql-schema-support)
+7. [Migration review and recovery](#migration-review-and-recovery)
+8. [Upgrading from v1](#upgrading-from-v1)
+9. [Contributing](#contributing)
+10. [License](#license)
+
+## Features
+
+1. **Typed Go client.** Generate model structs, unique keys, filters, and create and update inputs from your schema. Validate and generate offline.
+2. **Relationships.** Fetch related records in batches, work with explicit join models, or connect records through implicit many-to-many relations.
+3. **Reviewable migrations.** Preview schema changes as SQL, detect drift against migration history, and deploy checked-in migrations under a database lock.
+
+## Installation
+
+TORM requires Go 1.23 or newer and supports PostgreSQL 16–18. Use a supported Go release for production builds. Install the CLI and add the matching runtime dependency from your Go module directory.
+
+```sh
+go install github.com/TechXTT/TORM/v2/cmd/torm@v2.0.0
+go get github.com/TechXTT/TORM/v2/pkg/runtime@v2.0.0
+```
+
+Add your Go binary directory to `PATH` so you can run `torm`. When working from a checkout, install the CLI with `go install ./cmd/torm` from the repository root. The bundled example already points its Go dependency at the checkout.
+
+## Getting started
+
+The [example application](example/) serves creators and their posts over HTTP. Follow the steps below from a checkout to generate its client and create a fresh development database schema.
+
+### Define the schema
+
+TORM reads `prisma/schema.prisma` by default. In the example, each creator has a UUID primary key, a unique username, and a collection of posts. Here is an excerpt from the [complete schema](example/prisma/schema.prisma).
+
+```prisma
+model Creator {
+  id        String   @id @default(uuid()) @db.Uuid
+  username  String   @unique
+  email     String   @unique
+  firstName String?  @map("firstname")
+  lastName  String?  @map("lastname")
+  createdAt DateTime @default(now()) @map("createdat") @db.Timestamp(6)
+  updatedAt DateTime @updatedAt @map("updatedat") @db.Timestamp(6)
+  posts     Post[]
+
+  @@map("creator")
+}
+```
+
+### Generate the Go client
+
+From the repository root, switch to the example directory. Run the remaining example commands there.
+
+```sh
+cd example
+torm validate
+torm generate --out-models models
+```
+
+This writes the models and services to `models/torm.gen.go`. You can check this file into version control and verify regeneration in CI.
+
+### Create and apply the first migration
+
+1. Create two empty PostgreSQL databases, `torm_example` for the application and `torm_shadow` for migration planning. Use the same PostgreSQL major version for both. Give the development role access to both databases and permission to create schemas in the shadow database. Keep the shadow database dedicated to TORM, with an empty `public` schema.
+2. Copy `.env.example` to `.env`, set `DATABASE_URL` and `TORM_SHADOW_DATABASE_URL` to those connections, and generate the initial migration.
 
    ```sh
-   torm validate
-   torm generate --out-models models
    torm migrate plan --name initial
    ```
 
-4. Review `torm/migrations/0001_initial.up.sql`, apply it, then start the example. The HTTP app serves `/creators` and `/posts` on port 8080.
+3. Review `torm/migrations/0001_initial.up.sql`, then apply it and start the example.
 
    ```sh
    torm migrate deploy
@@ -24,9 +88,39 @@ Use Go 1.23 or newer and PostgreSQL 16–18. The CI matrix keeps the previous Go
    go run .
    ```
 
-Use the same published v2 tag for the CLI and runtime dependency in a downstream project. The example module uses a local replacement so it builds against the checkout. Check in the reviewed SQL migrations. Generated code can also be checked in and verified by a regeneration check in CI.
+The app listens on port 8080. In another terminal, run `curl http://localhost:8080/creators` to list creators. The corresponding posts endpoint is `/posts`.
 
-## Commands
+### Use the generated client
+
+The generated package provides typed keys, filters, sorting, relationship includes, and create/update inputs. A zero input leaves a value omitted. `runtime.Set` sends an explicit Go value, including `false`, `0`, or `""`. `runtime.Null[T]()` writes SQL `NULL` for a nullable field.
+
+```go
+func createCreator(ctx context.Context, dsn string) (*models.Creator, error) {
+	client, err := models.Open(dsn)
+	if err != nil {
+		return nil, err
+	}
+	defer client.Close()
+
+	creators, err := client.CreatorService()
+	if err != nil {
+		return nil, err
+	}
+	creator, err := creators.Insert(ctx, models.CreatorCreate{
+		Username: runtime.Set("ada"),
+		Email:    runtime.Set("ada@example.test"),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return creators.Fetch(ctx, models.CreatorById(creator.Id),
+		models.CreatorInclude{Posts: true})
+}
+```
+
+`Find` accepts typed filters, order, offset, and limit. `Fetch`, `Patch`, `UpsertBy`, and `DeleteBy` use a declared unique key. `UpsertBy` uses PostgreSQL `ON CONFLICT`. `Client.Transaction` provides transaction-scoped services. Use `CreateBatch` for atomic multi-row writes and `runtime.All[Model]()` to explicitly target all rows for a bulk mutation. Relation includes load in batches. Implicit many-to-many services expose typed `Connect<Relation>` and `Disconnect<Relation>` methods, and explicit join models use regular CRUD.
+
+## Command reference
 
 | Command | Behavior |
 | --- | --- |
@@ -39,9 +133,19 @@ Use the same published v2 tag for the CLI and runtime dependency in a downstream
 | `torm migrate baseline` | Replay and verify existing history before recording checksums on an existing database. |
 | `torm migrate reset --force` | Rebuild a disposable development database from migration history. The rebuild discards application rows. |
 
-Schema commands default to `prisma/schema.prisma`. Set `--schema` to a file or a directory of `.prisma` files. The migration directory defaults to `torm/migrations`. Override it with `--out-migrations` or `--dir`. Deployment and status can run from reviewed SQL files and a connection string alone.
+Run `torm --help` for the full command list or `torm migrate <command> --help` for migration options.
 
-TORM reads connection settings from `--dsn`, `TORM_DATABASE_URL`, `DATABASE_URL`, or the legacy schema's datasource URL, in that order. Database commands load `.env` from the working directory. Set the shadow connection with `TORM_SHADOW_DATABASE_URL` or `--shadow-dsn`. Use a PostgreSQL DSN for Go and leave Prisma CLI-only query parameters, such as `schema`, in Prisma's configuration. Generated `Open(dsn)` and `NewClientFromDB(db)` take explicit connections. `Open` owns its pool, and `NewClientFromDB` borrows the caller's pool.
+## Configuration
+
+| Setting | Default or lookup order |
+| --- | --- |
+| Schema | `prisma/schema.prisma`. Use `--schema` for another file or a directory of `.prisma` files. |
+| Generated client | `torm/models/torm.gen.go`, in package `models`. Override with `--out-models` and `--package`. |
+| Migration directory | `torm/migrations`. Override with `--out-migrations` or its alias `--dir`. |
+| Target connection | `--dsn`, then `TORM_DATABASE_URL`, `DATABASE_URL`, and finally the URL in a legacy datasource block. Database commands load `.env` from the working directory. |
+| Shadow connection | `--shadow-dsn` or `TORM_SHADOW_DATABASE_URL`. Deployment and status need only the target connection and reviewed SQL files. |
+
+Use a PostgreSQL DSN suitable for Go. Keep Prisma CLI-only parameters such as `schema` in Prisma’s configuration. In application code, `models.Open(dsn)` owns its connection pool. Use `models.NewClientFromDB(db)` to share a pool that your application manages.
 
 ## PostgreSQL schema support
 
@@ -57,34 +161,6 @@ TORM uses its own validator and code generator. CI validates the reference schem
 | Relations | PostgreSQL foreign keys, referential actions, one-to-one, one-to-many, explicit join models, and Prisma-style implicit many-to-many join tables. Relations can reference declared composite unique keys. |
 | Current scope | PostgreSQL `public` schema, foreign-key relation mode, and ordinary tables. Other providers, multi-schema models, advanced index options, relation emulation, and Prisma 8 contracts require additional support. |
 
-## Generated Go API
-
-The generated package provides typed keys, filters, sorting, relationship includes, and create/update inputs. A zero input leaves a value omitted. `runtime.Set` sends an explicit Go value, including `false`, `0`, or `""`. `runtime.Null[T]()` writes SQL `NULL` for a nullable field.
-
-```go
-client, err := models.Open(dsn)
-if err != nil {
-    return err
-}
-defer client.Close()
-
-creators, err := client.CreatorService()
-if err != nil {
-    return err
-}
-creator, err := creators.Insert(ctx, models.CreatorCreate{
-    Username: runtime.Set("ada"),
-    Email: runtime.Set("ada@example.test"),
-})
-if err != nil {
-    return err
-}
-withPosts, err := creators.Fetch(ctx, models.CreatorById(creator.Id),
-    models.CreatorInclude{Posts: true})
-```
-
-`Find` accepts typed filters, order, offset, and limit. `Fetch`, `Patch`, `UpsertBy`, and `DeleteBy` use a declared unique key. `UpsertBy` uses PostgreSQL `ON CONFLICT`. `Client.Transaction` provides transaction-scoped services. Use `CreateBatch` for atomic multi-row writes and `runtime.All[Model]()` to explicitly target all rows for a bulk mutation. Relation includes load in batches. Implicit many-to-many services expose typed `Connect<Relation>` and `Disconnect<Relation>` methods, and explicit join models use regular CRUD.
-
 ## Migration review and recovery
 
 1. Run `migrate plan` after changing the schema. The planner replays applied files in a temporary shadow schema, compares it with the live database, replays pending files, and verifies the proposed SQL. It expects history to describe the managed `public` schema. Preserve a separate, dedicated shadow database for this purpose.
@@ -95,20 +171,19 @@ withPosts, err := creators.Fetch(ctx, models.CreatorById(creator.Id),
 
 For enum changes that add labels and immediately use them in another database object, put the enum addition and its first use in separate migrations. Removing or reordering enum values requires reviewed manual SQL.
 
-## Upgrade from v1.0.0
+## Upgrading from v1
 
 1. Keep the original `.up.sql` and `.down.sql` files. Preserve physical names with `@map` and `@@map`, or use `--legacy-names` for the v1 lowercase convention. A legacy datasource URL also selects lowercase names. Existing custom join layouts can be declared as explicit join models or migrated with reviewed SQL.
 2. Point TORM at the original migration directory. Run `migrate status` and then `migrate baseline` using a disposable shadow database. Baselining checks schema objects against replayed SQL before updating the migration ledger. Verify any historical data backfills separately. For a database without TORM history, use `--version` to select the verified prefix if newer files are still pending. Repair catalog drift and resolve history discrepancies before baselining.
 3. Plan and review the changes to types and constraints. The [bundled v1 example upgrade](example/migrations/0003_upgrade_schema.up.sql) keeps existing creator names and posts, backfills usernames from IDs, adds required constraints, and converts post author IDs to UUIDs. It requires valid email values and author references. Its historical migrations require `uuid-ossp` in the shadow database. The fresh quickstart uses a separate migration directory and client-generated UUIDs.
 4. Regenerate and recompile your application. The v2 Go module has the `/v2` suffix. The generated API retains the v1 service methods where possible. Update callers for nullable fields that now use pointers, relationship slices that contain pointers, and filters that require declared field or unique-key names. Use `Open` or `NewClientFromDB` to replace runtime schema-file loading.
 
-## Verification
+## Contributing
 
-1. Run `go test ./...` and `go vet ./...` in the root and in `example/`.
-2. Set `TORM_TEST_DATABASE_URL` to a disposable PostgreSQL server connection whose role can create databases, then run `go test -count=1 ./...` at the root. The integration suite creates its own databases and exercises fresh installs, repeat planning, failed and concurrent migrations, drift, the v1 data upgrade, and generated queries.
-3. Run `npx --yes prisma@7.10.1 validate --schema example/prisma/schema.prisma` and `npx --yes prisma@7.10.1 validate --schema pkg/internal/schema/testdata/postgres` to check the shared Prisma fixtures. This is the last Prisma 7 release, pinned because Prisma 8 uses a different contract format.
-4. The GitHub Actions workflow tests supported Go and PostgreSQL configurations, verifies checked-in generated output, and packages binaries when a v2 tag is pushed.
+1. Run `go test ./...` and `go vet ./...` in both the repository root and `example/`.
+2. To exercise migrations and generated queries against PostgreSQL, set `TORM_TEST_DATABASE_URL` to a disposable server connection whose role can create databases. Run `go test -count=1 ./...` at the root.
+3. CI also checks that the generated example client is up to date and validates both reference schemas with the pinned Prisma 7 CLI. See the [build workflow](.github/workflows/build.yaml) for the exact commands and test matrix.
 
 ## License
 
-[MIT](LICENSE)
+TORM is released under the [MIT License](LICENSE).
