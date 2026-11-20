@@ -1,44 +1,45 @@
 package config
 
 import (
-	"io/ioutil"
-	"log"
+	"fmt"
 	"os"
-	"regexp"
 
+	"github.com/TechXTT/TORM/v2/pkg/internal/schema"
 	"github.com/joho/godotenv"
 )
 
-// Config holds all settings for migrate and codegen.
 type Config struct {
 	DSN        string
 	SchemaPath string
-	SchemaDir  string
+	// Deprecated: use SchemaPath.
+	SchemaDir string
 }
 
-// Load reads DSN from Prisma schema and fills defaults.
-func Load(schemaFile string) (*Config, error) {
-	data, err := ioutil.ReadFile(schemaFile)
+func Load(schemaPath string) (*Config, error) {
+	source, err := schema.Load(schemaPath, false)
 	if err != nil {
 		return nil, err
 	}
-	re := regexp.MustCompile(`url\s*=\s*(?:env\("([^"]+)"\)|"([^"]+)")`)
-	m := re.FindStringSubmatch(string(data))
-	godotenv.Load()
-	var dsn string
-	if len(m) == 3 {
-		if m[1] != "" {
-			dsn = os.Getenv(m[1])
-		} else {
-			dsn = m[2]
-		}
-	} else {
-		log.Fatalf("could not parse datasource url from schema: %s", schemaFile)
+	LoadEnv()
+	dsn, err := ResolveDSN("", source.Source.Environment, source.Source.URL)
+	if err != nil {
+		return nil, err
 	}
+	return &Config{DSN: dsn, SchemaPath: schemaPath, SchemaDir: schemaPath}, nil
+}
 
-	return &Config{
-		DSN:        dsn,
-		SchemaPath: schemaFile,
-		SchemaDir:  "prisma/schema.prisma",
-	}, nil
+func LoadEnv() {
+	_ = godotenv.Load()
+}
+
+func ResolveDSN(override, legacyEnv, legacyURL string) (string, error) {
+	for _, candidate := range []string{override, os.Getenv("TORM_DATABASE_URL"), os.Getenv("DATABASE_URL"), os.Getenv(legacyEnv), legacyURL} {
+		if candidate != "" {
+			return candidate, nil
+		}
+	}
+	if legacyEnv != "" {
+		return "", fmt.Errorf("set %s, TORM_DATABASE_URL, or DATABASE_URL", legacyEnv)
+	}
+	return "", fmt.Errorf("set TORM_DATABASE_URL or DATABASE_URL")
 }

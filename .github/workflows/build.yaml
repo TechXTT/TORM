@@ -1,93 +1,125 @@
-name: Go Application CI
+name: Build, test, and release
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
+    tags: ['v2.*']
   pull_request:
-    branches: [ main ]
+
+permissions:
+  contents: read
 
 jobs:
-  build:
-    name: Build and Test
+  go:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        go: ['1.23.x', stable]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ matrix.go }}
+          cache-dependency-path: |
+            go.sum
+            example/go.sum
+      - run: go test ./...
+      - run: go vet ./...
+      - run: go build ./cmd/torm
+      - run: go run ./cmd/torm generate --schema example/prisma/schema.prisma --out-models example/models
+      - run: git diff --exit-code -- example/models
+      - run: go test ./... && go vet ./...
+        working-directory: example
+
+  prisma:
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - run: npx --yes prisma@7.10.1 validate --schema example/prisma/schema.prisma
+      - run: npx --yes prisma@7.10.1 validate --schema pkg/internal/schema/testdata/postgres
+
+  postgres:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        postgres: [16, 17, 18]
     services:
       postgres:
-        image: postgres:13
+        image: postgres:${{ matrix.postgres }}
         env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: password
+          POSTGRES_USER: torm_test
+          POSTGRES_PASSWORD: torm_test
+          POSTGRES_DB: postgres
         ports:
-          - 5432:5432
+          - 5432/tcp
         options: >-
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 10s
+          --health-cmd "pg_isready -U torm_test -d postgres"
+          --health-interval 5s
           --health-timeout 5s
-          --health-retries 5
-
+          --health-retries 10
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v2
-
-    - name: Set up Go
-      uses: actions/setup-go@v2
-      with:
-        go-version: '1.23'
-
-    - name: Cache Go modules
-      uses: actions/cache@v3
-      with:
-        path: ~/go/pkg/mod
-        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-        restore-keys: |
-          ${{ runner.os }}-go-
-
-    - name: Lint
-      run: |
-        go install golang.org/x/lint/golint@latest
-        golint ./...
-
-    - name: Test
-      env:
-        DATABASE_URL: postgres://postgres:password@localhost:5432/postgres?sslmode=disable
-      run: go test ./...
-
-    - name: Build
-      run: |
-        go build -o torm ./cmd/torm
-      env:
-        CGO_ENABLED: 0
-
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+          cache-dependency-path: |
+            go.sum
+            example/go.sum
+      - run: go test -count=1 ./...
+        env:
+          TORM_TEST_DATABASE_URL: postgres://torm_test:torm_test@localhost:${{ job.services.postgres.ports['5432'] }}/postgres?sslmode=disable
 
   release:
-    needs: build
-    if: startsWith(github.event.head_commit.message, 'Release ')
+    needs: [go, prisma, postgres]
+    if: github.ref_type == 'tag'
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v2
-
-      - name: Set up Git
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-      - name: Extract version from commit message
-        id: extract_version
-        run: |
-          # Extract the version using the GitHub context variable
-          VERSION=$(echo "${{ github.event.head_commit.message }}" | sed -n 's/^Release \(.*\)$/\1/p')
-          # Write the version to the GitHub environment file for later steps
-          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
-          # Output the extracted version to the logs for debugging
-          echo "Extracted version: ${VERSION}"
-
-      - name: Create Release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
-          tag_name: ${{ env.VERSION }}
-          release_name: Release ${{ env.VERSION }}
-          draft: false
-          prerelease: ${{ contains(env.VERSION, '-alpha') || contains(env.VERSION, '-beta') }}
+          go-version: stable
+      - name: Build archives
+        run: |
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v2\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$ ]]; then
+            echo "Expected a v2 semantic version tag."
+            exit 1
+          fi
+          mkdir -p dist
+          cp LICENSE dist/
+          for platform in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do
+            os="${platform%/*}"
+            arch="${platform#*/}"
+            binary=torm
+            if [[ "$os" == windows ]]; then
+              binary=torm.exe
+            fi
+            CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build -trimpath \
+              -ldflags "-X github.com/TechXTT/TORM/v2/pkg/cli.releaseVersion=$GITHUB_REF_NAME" \
+              -o "dist/$binary" ./cmd/torm
+            if [[ "$os" == windows ]]; then
+              (cd dist && zip "torm-$os-$arch.zip" "$binary" LICENSE)
+            else
+              tar -czf "dist/torm-$os-$arch.tar.gz" -C dist "$binary" LICENSE
+            fi
+            rm "dist/$binary"
+          done
+          rm dist/LICENSE
+          (cd dist && sha256sum *.tar.gz *.zip > SHA256SUMS)
+      - name: Publish tagged release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          flags=(--verify-tag --generate-notes)
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then
+            flags+=(--prerelease)
+          fi
+          gh release create "$GITHUB_REF_NAME" dist/* "${flags[@]}"

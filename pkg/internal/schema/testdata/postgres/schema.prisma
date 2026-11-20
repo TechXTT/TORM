@@ -1,0 +1,32 @@
+datasource db {
+  provider = "postgresql"
+}
+
+enum Visibility {
+  PUBLIC @map("public")
+  PRIVATE @map("private")
+
+  @@map("visibility")
+}
+
+model Author {
+  id      String    @id @default(uuid(7)) @db.Uuid
+  contact String    @unique @map("contact_address")
+  profile Profile?
+  entries Entry[]
+  tags    Tag[]     @relation("AuthorTags")
+}
+
+model Profile {
+  id     Int    @id @default(autoincrement())
+  userId String @unique @db.Uuid
+  user   Author @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bio    String?
+}
+
+model Tag {
+  id      Int      @id @default(autoincrement())
+  name    String   @unique @db.VarChar(80)
+  authors Author[] @relation("AuthorTags")
+  uses    EntryTag[]
+}

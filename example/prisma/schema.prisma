@@ -1,21 +1,18 @@
 datasource db {
-  provider = "postgres"
-  url      = env("DATABASE_URL")
-}
-
-generator client {
-  provider = "go run github.com/TechXTT/TORM"
-  output   = "../prisma-client"
+  provider = "postgresql"
 }
 
 model Creator {
   id        String   @id @default(uuid()) @db.Uuid
-  username String   @unique
+  username  String   @unique
   email     String   @unique
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  firstName String?  @map("firstname")
+  lastName  String?  @map("lastname")
+  createdAt DateTime @default(now()) @map("createdat") @db.Timestamp(6)
+  updatedAt DateTime @updatedAt @map("updatedat") @db.Timestamp(6)
+  posts     Post[]
 
-  Posts Post[]
+  @@map("creator")
 }
 
 model Post {
@@ -23,8 +20,11 @@ model Post {
   title     String
   content   String
   published Boolean  @default(false)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  authorId  String
-  author    Creator  @relation(fields: [authorId], references: [id])
+  createdAt DateTime @default(now()) @map("createdat") @db.Timestamp(6)
+  updatedAt DateTime @updatedAt @map("updatedat") @db.Timestamp(6)
+  authorId  String   @map("authorid") @db.Uuid
+  author    Creator  @relation(fields: [authorId], references: [id], onDelete: Restrict)
+
+  @@index([authorId])
+  @@map("post")
 }

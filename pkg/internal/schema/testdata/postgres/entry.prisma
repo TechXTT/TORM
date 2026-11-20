@@ -1,0 +1,30 @@
+model Entry {
+  tenant      Int
+  slug        String
+  rank        BigInt
+  authorId    String?    @db.Uuid
+  author      Author?    @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  visibility  Visibility @default(PUBLIC)
+  labels      String[]   @default(["{ }", "a quoted \"value\""])
+  amounts     Decimal[]  @db.Decimal(12, 2)
+  metadata    Json?
+  contents    Bytes?
+  featured    Boolean    @default(false)
+  changedAt   DateTime   @updatedAt @db.Timestamptz(6)
+  uses        EntryTag[]
+
+  @@id([tenant, slug], name: "entryKey")
+  @@index([authorId], map: "entries_author_idx")
+  @@map("entries")
+}
+
+model EntryTag {
+  tenant Int
+  slug   String
+  tagId  Int
+
+  entry Entry @relation(fields: [tenant, slug], references: [tenant, slug], onDelete: Cascade)
+  tag   Tag   @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([tenant, slug, tagId])
+}

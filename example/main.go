@@ -1,170 +1,182 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
 	"os"
-	"strings"
-
-	_ "github.com/lib/pq"
 
 	"github.com/TechXTT/TORM/example/models"
-	_ "github.com/joho/godotenv/autoload" // Automatically load .env file
+	"github.com/TechXTT/TORM/v2/pkg/runtime"
+	"github.com/google/uuid"
+	_ "github.com/joho/godotenv/autoload"
 )
 
-func main() {
-	// Bootstrap
-	if os.Getenv("DATABASE_URL") == "" {
-		log.Fatal("DATABASE_URL must be set")
-	}
-	client := models.NewClient()
-
-	creatorSvc, err := client.CreatorService()
-	if err != nil {
-		log.Fatalf("CreatorService init: %v", err)
-	}
-	postSvc, err := client.PostService()
-	if err != nil {
-		log.Fatalf("PostService init: %v", err)
-	}
-
-	// --- Creator endpoints ---
-	http.HandleFunc("/creators", func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodGet:
-			list, err := creatorSvc.FindMany(r.Context(), nil, nil, 0, 0)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			respondJSON(w, list)
-		case http.MethodPost:
-			var input map[string]interface{}
-			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-				http.Error(w, "invalid JSON", http.StatusBadRequest)
-				return
-			}
-			rec, err := creatorSvc.Create(r.Context(), input)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			w.WriteHeader(http.StatusCreated)
-			respondJSON(w, rec)
-		default:
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		}
-	})
-
-	http.HandleFunc("/creators/", func(w http.ResponseWriter, r *http.Request) {
-		id := strings.TrimPrefix(r.URL.Path, "/creators/")
-		switch r.Method {
-		case http.MethodGet:
-			rec, err := creatorSvc.FindUnique(r.Context(), map[string]interface{}{"id": id})
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			if rec == nil {
-				http.NotFound(w, r)
-				return
-			}
-			respondJSON(w, rec)
-		case http.MethodPut:
-			var input map[string]interface{}
-			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-				http.Error(w, "invalid JSON", http.StatusBadRequest)
-				return
-			}
-			rec, err := creatorSvc.Update(r.Context(), map[string]interface{}{"id": id}, input)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			respondJSON(w, rec)
-		case http.MethodDelete:
-			if err := creatorSvc.Delete(r.Context(), map[string]interface{}{"id": id}); err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			w.WriteHeader(http.StatusNoContent)
-		default:
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		}
-	})
-
-	// --- Post endpoints ---
-	http.HandleFunc("/posts", func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodGet:
-			list, err := postSvc.FindMany(r.Context(), nil, nil, 0, 0)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			respondJSON(w, list)
-		case http.MethodPost:
-			var input map[string]interface{}
-			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-				http.Error(w, "invalid JSON", http.StatusBadRequest)
-				return
-			}
-			rec, err := postSvc.Create(r.Context(), input)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			w.WriteHeader(http.StatusCreated)
-			respondJSON(w, rec)
-		default:
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		}
-	})
-
-	http.HandleFunc("/posts/", func(w http.ResponseWriter, r *http.Request) {
-		id := strings.TrimPrefix(r.URL.Path, "/posts/")
-		switch r.Method {
-		case http.MethodGet:
-			rec, err := postSvc.FindUnique(r.Context(), map[string]interface{}{"id": id})
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			if rec == nil {
-				http.NotFound(w, r)
-				return
-			}
-			respondJSON(w, rec)
-		case http.MethodPut:
-			var input map[string]interface{}
-			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-				http.Error(w, "invalid JSON", http.StatusBadRequest)
-				return
-			}
-			rec, err := postSvc.Update(r.Context(), map[string]interface{}{"id": id}, input)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			respondJSON(w, rec)
-		case http.MethodDelete:
-			if err := postSvc.Delete(r.Context(), map[string]interface{}{"id": id}); err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			w.WriteHeader(http.StatusNoContent)
-		default:
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		}
-	})
-
-	log.Println("🦊 Server listening on :8080")
-	log.Fatal(http.ListenAndServe(":8080", nil))
+type creatorInput struct {
+	Username *string
+	Email    *string
 }
 
-// respondJSON is a helper to write JSON responses.
-func respondJSON(w http.ResponseWriter, v interface{}) {
+func (input creatorInput) values() models.CreatorCreate {
+	var values models.CreatorCreate
+
+	if input.Username != nil {
+		values.Username = runtime.Set(*input.Username)
+	}
+	if input.Email != nil {
+		values.Email = runtime.Set(*input.Email)
+	}
+	return values
+}
+
+type postInput struct {
+	Title     *string
+	Content   *string
+	Published *bool
+	AuthorID  *uuid.UUID
+}
+
+func (input postInput) values() models.PostCreate {
+	var values models.PostCreate
+
+	if input.Title != nil {
+		values.Title = runtime.Set(*input.Title)
+	}
+	if input.Content != nil {
+		values.Content = runtime.Set(*input.Content)
+	}
+	if input.Published != nil {
+		values.Published = runtime.Set(*input.Published)
+	}
+	if input.AuthorID != nil {
+		values.AuthorId = runtime.Set(*input.AuthorID)
+	}
+	return values
+}
+
+type endpoints[M, I any] struct {
+	list   func(context.Context) ([]*M, error)
+	get    func(context.Context, uuid.UUID) (*M, error)
+	insert func(context.Context, I) (*M, error)
+	patch  func(context.Context, uuid.UUID, I) (*M, error)
+	remove func(context.Context, uuid.UUID) error
+}
+
+func register[M, I any](mux *http.ServeMux, path string, handlers endpoints[M, I]) {
+	mux.HandleFunc("GET "+path, func(w http.ResponseWriter, r *http.Request) {
+		rows, err := handlers.list(r.Context())
+		respond(w, http.StatusOK, rows, err)
+	})
+	mux.HandleFunc("POST "+path, func(w http.ResponseWriter, r *http.Request) {
+		var input I
+
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			http.Error(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+		item, err := handlers.insert(r.Context(), input)
+		respond(w, http.StatusCreated, item, err)
+	})
+	mux.HandleFunc("GET "+path+"/{id}", func(w http.ResponseWriter, r *http.Request) {
+		id, err := uuid.Parse(r.PathValue("id"))
+		if err != nil {
+			http.Error(w, "invalid UUID", http.StatusBadRequest)
+			return
+		}
+		item, err := handlers.get(r.Context(), id)
+		if item == nil && err == nil {
+			http.NotFound(w, r)
+			return
+		}
+		respond(w, http.StatusOK, item, err)
+	})
+	mux.HandleFunc("PUT "+path+"/{id}", func(w http.ResponseWriter, r *http.Request) {
+		var input I
+
+		id, err := uuid.Parse(r.PathValue("id"))
+		if err != nil || json.NewDecoder(r.Body).Decode(&input) != nil {
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		item, err := handlers.patch(r.Context(), id, input)
+		respond(w, http.StatusOK, item, err)
+	})
+	mux.HandleFunc("DELETE "+path+"/{id}", func(w http.ResponseWriter, r *http.Request) {
+		id, err := uuid.Parse(r.PathValue("id"))
+		if err != nil {
+			http.Error(w, "invalid UUID", http.StatusBadRequest)
+			return
+		}
+		if err := handlers.remove(r.Context(), id); err != nil {
+			respond(w, http.StatusNoContent, nil, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+}
+
+func respond(w http.ResponseWriter, status int, value any, err error) {
+	if err != nil {
+		log.Printf("database operation: %v", err)
+		http.Error(w, "database operation failed", http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(v)
+	w.WriteHeader(status)
+	if err := json.NewEncoder(w).Encode(value); err != nil {
+		log.Printf("encode response: %v", err)
+	}
+}
+
+func main() {
+	client, err := models.Open(os.Getenv("DATABASE_URL"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer client.Close()
+	creators, err := client.CreatorService()
+	if err != nil {
+		log.Fatal(err)
+	}
+	posts, err := client.PostService()
+	if err != nil {
+		log.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	register(mux, "/creators", endpoints[models.Creator, creatorInput]{
+		list: func(ctx context.Context) ([]*models.Creator, error) {
+			return creators.Find(ctx, models.CreatorQuery{})
+		},
+		get: func(ctx context.Context, id uuid.UUID) (*models.Creator, error) {
+			return creators.Fetch(ctx, models.CreatorById(id), models.CreatorInclude{Posts: true})
+		},
+		insert: func(ctx context.Context, input creatorInput) (*models.Creator, error) {
+			return creators.Insert(ctx, input.values())
+		},
+		patch: func(ctx context.Context, id uuid.UUID, input creatorInput) (*models.Creator, error) {
+			return creators.Patch(ctx, models.CreatorById(id), models.CreatorUpdate(input.values()))
+		},
+		remove: func(ctx context.Context, id uuid.UUID) error {
+			return creators.DeleteBy(ctx, models.CreatorById(id))
+		},
+	})
+	register(mux, "/posts", endpoints[models.Post, postInput]{
+		list: func(ctx context.Context) ([]*models.Post, error) {
+			return posts.Find(ctx, models.PostQuery{})
+		},
+		get: func(ctx context.Context, id uuid.UUID) (*models.Post, error) {
+			return posts.Fetch(ctx, models.PostById(id), models.PostInclude{Author: true})
+		},
+		insert: func(ctx context.Context, input postInput) (*models.Post, error) {
+			return posts.Insert(ctx, input.values())
+		},
+		patch: func(ctx context.Context, id uuid.UUID, input postInput) (*models.Post, error) {
+			return posts.Patch(ctx, models.PostById(id), models.PostUpdate(input.values()))
+		},
+		remove: func(ctx context.Context, id uuid.UUID) error {
+			return posts.DeleteBy(ctx, models.PostById(id))
+		},
+	})
+	log.Fatal(http.ListenAndServe(":8080", mux))
 }
