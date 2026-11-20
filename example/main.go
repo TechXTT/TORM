@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"os"
@@ -85,11 +87,7 @@ func register[M, I any](mux *http.ServeMux, path string, handlers endpoints[M, I
 			return
 		}
 		item, err := handlers.get(r.Context(), id)
-		if item == nil && err == nil {
-			http.NotFound(w, r)
-			return
-		}
-		respond(w, http.StatusOK, item, err)
+		respondItem(w, r, item, err)
 	})
 	mux.HandleFunc("PUT "+path+"/{id}", func(w http.ResponseWriter, r *http.Request) {
 		var input I
@@ -100,7 +98,7 @@ func register[M, I any](mux *http.ServeMux, path string, handlers endpoints[M, I
 			return
 		}
 		item, err := handlers.patch(r.Context(), id, input)
-		respond(w, http.StatusOK, item, err)
+		respondItem(w, r, item, err)
 	})
 	mux.HandleFunc("DELETE "+path+"/{id}", func(w http.ResponseWriter, r *http.Request) {
 		id, err := uuid.Parse(r.PathValue("id"))
@@ -114,6 +112,14 @@ func register[M, I any](mux *http.ServeMux, path string, handlers endpoints[M, I
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
+}
+
+func respondItem[M any](w http.ResponseWriter, r *http.Request, item *M, err error) {
+	if (item == nil && err == nil) || errors.Is(err, sql.ErrNoRows) {
+		http.NotFound(w, r)
+		return
+	}
+	respond(w, http.StatusOK, item, err)
 }
 
 func respond(w http.ResponseWriter, status int, value any, err error) {

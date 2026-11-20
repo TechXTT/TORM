@@ -182,7 +182,13 @@ func combine[M any](op string, filters []Filter[M]) Filter[M] {
 		}
 	}
 	if len(terms) == 0 {
+		if op == "OR" {
+			return Filter[M]{&predicate{op: "FALSE"}}
+		}
 		return Filter[M]{}
+	}
+	if len(terms) == 1 {
+		return Filter[M]{terms[0]}
 	}
 	return Filter[M]{&predicate{op: op, terms: terms}}
 }
@@ -216,8 +222,8 @@ func (s Store[M]) filter(node *predicate, args *[]any) (string, error) {
 		return "", nil
 	}
 	switch node.op {
-	case "TRUE":
-		return "TRUE", nil
+	case "TRUE", "FALSE":
+		return node.op, nil
 	case "AND", "OR":
 		terms := make([]string, 0, len(node.terms))
 		for _, child := range node.terms {
@@ -630,7 +636,7 @@ func WithTx(ctx context.Context, db Queryer, run func(Queryer) error) (err error
 		released = err == nil
 		return err
 	default:
-		return run(db)
+		return fmt.Errorf("query executor %T does not support transactions", db)
 	}
 }
 

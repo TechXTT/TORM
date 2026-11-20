@@ -146,8 +146,8 @@ func render(source *schema.Schema, packageName string) ([]byte, error) {
 	return result, nil
 }
 
-func Validate(source *schema.Schema) error {
-	_, err := generationData(source, "models")
+func Validate(source *schema.Schema, packageName string) error {
+	_, err := generationData(source, packageName)
 	return err
 }
 

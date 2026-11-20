@@ -37,8 +37,9 @@ func (c column) definition(name string) string {
 }
 
 type constraint struct {
-	Kind string
-	SQL  string
+	Kind            string
+	SQL             string
+	ReferencedTable string
 }
 
 type table struct {
@@ -74,8 +75,9 @@ func readCatalog(ctx context.Context, tx *sql.Tx) (catalog, error) {
 		LEFT JOIN pg_attrdef d ON d.adrelid = r.oid AND d.adnum = a.attnum
 		WHERE r.relkind = 'r' AND r.relpersistence = 'p' AND NOT r.relrowsecurity AND a.attnum > 0 AND NOT a.attisdropped
 		UNION ALL
-		SELECT 'constraint', r.name, c.conname::text, c.contype::text, pg_get_constraintdef(c.oid), ''
+		SELECT 'constraint', r.name, c.conname::text, c.contype::text, pg_get_constraintdef(c.oid), COALESCE(ref.relname::text, '')
 		FROM relations r JOIN pg_constraint c ON c.conrelid = r.oid
+		LEFT JOIN pg_class ref ON ref.oid = c.confrelid
 		WHERE r.relkind = 'r' AND r.relpersistence = 'p' AND NOT r.relrowsecurity AND c.contype <> 'n'
 		UNION ALL
 		SELECT 'index', r.name, i.relname::text,
@@ -142,7 +144,7 @@ func readCatalog(ctx context.Context, tx *sql.Tx) (catalog, error) {
 			}
 			entry.Columns[name] = column{Type: definition, Required: flag == "required", Default: extra, Identity: identity}
 		case "constraint":
-			entry.Constraints[name] = constraint{Kind: definition, SQL: extra}
+			entry.Constraints[name] = constraint{Kind: definition, SQL: extra, ReferencedTable: flag}
 		case "index":
 			entry.Indexes[name] = definition
 		}
@@ -194,30 +196,33 @@ func diff(before, after catalog) (MigrationPlan, error) {
 		}
 	}
 
-	var refreshForeignKeys bool
-
+	typeChanges := make(map[string]bool)
+	keyChanges := make(map[string]bool)
 	for name, previous := range before.Tables {
 		target := after.Tables[name]
 		if target == nil {
-			refreshForeignKeys = true
-			break
+			continue
 		}
 		for field, oldColumn := range previous.Columns {
 			newColumn, exists := target.Columns[field]
-			if !exists || oldColumn.Type != newColumn.Type {
-				refreshForeignKeys = true
+			if exists && oldColumn.Type != newColumn.Type {
+				typeChanges[name] = true
+				break
 			}
 		}
 		for key, oldConstraint := range previous.Constraints {
 			if (oldConstraint.Kind == "p" || oldConstraint.Kind == "u") && oldConstraint != target.Constraints[key] {
-				refreshForeignKeys = true
+				keyChanges[name] = true
 			}
 		}
 		for index, oldIndex := range previous.Indexes {
 			if strings.HasPrefix(oldIndex, "CREATE UNIQUE INDEX ") && oldIndex != target.Indexes[index] {
-				refreshForeignKeys = true
+				keyChanges[name] = true
 			}
 		}
+	}
+	refreshForeignKey := func(owner string, c constraint) bool {
+		return c.Kind == "f" && (typeChanges[owner] || typeChanges[c.ReferencedTable] || keyChanges[c.ReferencedTable])
 	}
 	for _, name := range sortedKeys(before.Tables) {
 		previous := before.Tables[name]
@@ -225,7 +230,7 @@ func diff(before, after catalog) (MigrationPlan, error) {
 		quotedTable := schema.Quote(name)
 		for _, key := range sortedKeys(previous.Constraints) {
 			oldConstraint := previous.Constraints[key]
-			if target != nil && oldConstraint == target.Constraints[key] && !(refreshForeignKeys && oldConstraint.Kind == "f") {
+			if target != nil && oldConstraint == target.Constraints[key] && !refreshForeignKey(name, oldConstraint) {
 				continue
 			}
 			statement := fmt.Sprintf("ALTER TABLE %s DROP CONSTRAINT %s;", quotedTable, schema.Quote(key))
@@ -305,7 +310,7 @@ func diff(before, after catalog) (MigrationPlan, error) {
 		}
 		for _, key := range sortedKeys(target.Constraints) {
 			newConstraint := target.Constraints[key]
-			if previous != nil && newConstraint == previous.Constraints[key] && !(refreshForeignKeys && newConstraint.Kind == "f") {
+			if previous != nil && newConstraint == previous.Constraints[key] && !refreshForeignKey(name, newConstraint) {
 				continue
 			}
 			statement := fmt.Sprintf("ALTER TABLE %s ADD CONSTRAINT %s %s;", quotedTable, schema.Quote(key), newConstraint.SQL)

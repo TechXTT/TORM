@@ -114,7 +114,7 @@ func NewMigrateCmd() *cobra.Command {
 				return err
 			}
 			defer manager.Close()
-			if err := generator.Validate(source); err != nil {
+			if err := generator.Validate(source, packageName); err != nil {
 				return err
 			}
 			result, path, err := manager.Develop(cmd.Context(), options.shadow(), source.DDL(), devName, devRisk)

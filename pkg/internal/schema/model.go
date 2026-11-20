@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"go/token"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"text/scanner"
@@ -136,18 +137,12 @@ func physicalName(value expression) (string, error) {
 func attributes(all []attribute, supported ...string) (map[string]attribute, error) {
 	byName := make(map[string]attribute)
 	for _, attr := range all {
-		allowed := false
-		for _, name := range supported {
-			if attr.name == name || (name == "db.*" && strings.HasPrefix(attr.name, "db.")) {
-				allowed = true
-			}
-		}
-		if !allowed {
-			return nil, diagnostic(attr.position, "unsupported attribute %s", attr.name)
-		}
 		name := attr.name
-		if strings.HasPrefix(name, "db.") {
-			name = "db.*"
+		if prefix, _, ok := strings.Cut(name, "."); ok {
+			name = prefix + ".*"
+		}
+		if !slices.Contains(supported, name) {
+			return nil, diagnostic(attr.position, "unsupported attribute %s", attr.name)
 		}
 		if _, found := byName[name]; found {
 			return nil, diagnostic(attr.position, "duplicate attribute %s", attr.name)
@@ -299,6 +294,7 @@ func resolve(blocks []block, legacyNames bool) (*Schema, error) {
 	enums := make(map[string]*Enum)
 	tables := make(map[string]bool)
 	goNames := make(map[string]bool)
+	nativeTypes := "db.*"
 	for _, b := range blocks {
 		if b.kind == "datasource" {
 			if hasSource {
@@ -308,6 +304,7 @@ func resolve(blocks []block, legacyNames bool) (*Schema, error) {
 				return nil, err
 			}
 			hasSource = true
+			nativeTypes = b.name + ".*"
 		}
 	}
 	legacyNames = legacyNames || s.Source.URL != "" || s.Source.Environment != ""
@@ -359,7 +356,7 @@ func resolve(blocks []block, legacyNames bool) (*Schema, error) {
 		return nil, diagnostic(blocks[0].position, "no model definitions found")
 	}
 	for i, model := range s.Models {
-		if err := populate(model, modelBlocks[i], models, enums, legacyNames); err != nil {
+		if err := populate(model, modelBlocks[i], models, enums, legacyNames, nativeTypes); err != nil {
 			return nil, err
 		}
 	}
@@ -377,7 +374,7 @@ func resolve(blocks []block, legacyNames bool) (*Schema, error) {
 	return &s, nil
 }
 
-func populate(model *Model, b block, models map[string]*Model, enums map[string]*Enum, legacy bool) error {
+func populate(model *Model, b block, models map[string]*Model, enums map[string]*Enum, legacy bool, nativeTypes string) error {
 	fieldNames := make(map[string]bool)
 	columnNames := make(map[string]bool)
 	var fieldAttrs []map[string]attribute
@@ -395,7 +392,7 @@ func populate(model *Model, b block, models map[string]*Model, enums map[string]
 			model.Relations = append(model.Relations, relation)
 			continue
 		}
-		field, attrs, err := scalar(source, enums[source.kind], legacy)
+		field, attrs, err := scalar(source, enums[source.kind], legacy, nativeTypes)
 		if err != nil {
 			return err
 		}
@@ -499,8 +496,8 @@ func (m *Model) addKey(attr attribute, fields []*Field) error {
 	return nil
 }
 
-func scalar(source fieldSyntax, enum *Enum, legacy bool) (*Field, map[string]attribute, error) {
-	attrs, err := attributes(source.attributes, "id", "unique", "map", "default", "updatedAt", "db.*")
+func scalar(source fieldSyntax, enum *Enum, legacy bool, nativeTypes string) (*Field, map[string]attribute, error) {
+	attrs, err := attributes(source.attributes, "id", "unique", "map", "default", "updatedAt", nativeTypes)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -539,7 +536,7 @@ func scalar(source fieldSyntax, enum *Enum, legacy bool) (*Field, map[string]att
 		}
 		f.GoType, f.SQLType = Export(enum.Name), Quote(enum.Type)
 	}
-	if attr, ok := attrs["db.*"]; ok {
+	if attr, ok := attrs[nativeTypes]; ok {
 		if err := nativeType(f, attr); err != nil {
 			return nil, nil, err
 		}
@@ -566,7 +563,7 @@ func scalar(source fieldSyntax, enum *Enum, legacy bool) (*Field, map[string]att
 }
 
 func nativeType(f *Field, attr attribute) error {
-	name := strings.TrimPrefix(attr.name, "db.")
+	_, name, _ := strings.Cut(attr.name, ".")
 	var kind string
 	var sqlType string
 	var count int
@@ -577,10 +574,15 @@ func nativeType(f *Field, attr attribute) error {
 		f.GoType = "uuid.UUID"
 	case "Text":
 		kind, sqlType = "String", "text"
-	case "VarChar":
-		kind, sqlType, count = "String", "character varying(%d)", 1
-	case "Char":
-		kind, sqlType, count = "String", "character(%d)", 1
+	case "VarChar", "Char":
+		kind, sqlType = "String", "character"
+		if name == "VarChar" {
+			sqlType = "character varying"
+		}
+		if len(attr.args) > 0 {
+			sqlType += "(%d)"
+			count = 1
+		}
 	case "SmallInt":
 		kind, sqlType = "Int", "smallint"
 	case "Integer":
@@ -640,7 +642,7 @@ func nativeType(f *Field, attr attribute) error {
 			return diagnostic(attr.position, "invalid decimal precision or scale")
 		}
 	case "VarChar", "Char":
-		if args[0].(int) < 1 || args[0].(int) > 10485760 {
+		if count == 1 && (args[0].(int) < 1 || args[0].(int) > 10485760) {
 			return diagnostic(attr.position, "invalid character length")
 		}
 	case "Timestamp", "Timestamptz", "Time", "Timetz":
